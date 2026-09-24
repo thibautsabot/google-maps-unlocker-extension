@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<meta charset="utf-8">
+<title>GM Native Maps</title>
+
+<style>
+  :root { color-scheme: light dark; }
+
+  body {
+    margin: 0;
+    padding: 14px 16px;
+    width: 270px;
+    font: 13px/1.45 system-ui, sans-serif;
+  }
+
+  h1 {
+    margin: 0 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  label {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0 9px;
+    align-items: center;
+    padding: 9px 0;
+    cursor: pointer;
+  }
+
+  #features label + label { border-top: 1px solid color-mix(in srgb, currentColor 15%, transparent); }
+
+  input { margin: 0; }
+
+  small {
+    grid-column: 2;
+    opacity: 0.65;
+  }
+
+  p {
+    margin: 12px 0 0;
+    opacity: 0.65;
+  }
+
+  button {
+    margin-top: 10px;
+    width: 100%;
+    padding: 7px;
+    font: inherit;
+    border: 1px solid color-mix(in srgb, currentColor 30%, transparent);
+    border-radius: 6px;
+    background: color-mix(in srgb, currentColor 8%, transparent);
+    color: inherit;
+    cursor: pointer;
+  }
+
+  button:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
+
+  button[hidden] { display: none; }
+</style>
+
+<h1>Google Maps, unhidden</h1>
+
+<div id="features"></div>
+
+<p id="note">All off — the extension does nothing at all.</p>
+
+<button id="reload" hidden>Reload this Maps tab</button>
+
+<script src="../common/compat.js"></script>
+<script src="../common/features.js"></script>
+<script src="popup.js"></script>

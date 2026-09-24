@@ -1,0 +1,64 @@
+{
+  "manifest_version": 3,
+  "name": "GM Native Maps — Photos & Opening Hours",
+  "version": "11.2.0",
+  "description": "Shows the full week of opening hours, and lifts Google's photo cap by borrowing the cookies of a private session. Both off until switched on in the toolbar.",
+  "action": {
+    "default_title": "GM Native Maps",
+    "default_popup": "popup/popup.html"
+  },
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "gm-native-maps@local",
+      "strict_min_version": "128.0"
+    }
+  },
+  "permissions": [
+    "cookies",
+    "storage"
+  ],
+  "host_permissions": [
+    "*://*.google.com/*"
+  ],
+  "background": {
+    "scripts": [
+      "common/features.js",
+      "common/registry.js",
+      "common/log.js",
+      "photos/cookies.js",
+      "photos/verdict.js",
+      "photos/roll.js",
+      "common/dispatch.js"
+    ],
+    "service_worker": "service-worker.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.google.com/maps/*",
+        "https://maps.google.com/maps/*"
+      ],
+      "js": [
+        "photos/read.js",
+        "photos/watch.js",
+        "photos/ui.js",
+        "hours/hours.js"
+      ],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://www.google.com/maps/*",
+        "https://maps.google.com/maps/*"
+      ],
+      "js": [
+        "common/compat.js",
+        "common/features.js",
+        "common/bridge.js"
+      ],
+      "run_at": "document_start"
+    }
+  ],
+  "incognito": "spanning"
+}
