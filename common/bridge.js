@@ -65,7 +65,7 @@ window.addEventListener('message', (event) => {
   const data = event.data;
   if (!data || data.source !== 'gm-native-maps') return;
   if (!['gm-roll-outcome', 'gm-gallery-asking', 'gm-gallery-idle', 'gm-gallery-paged',
-       'gm-page-photos', 'gm-borrow-private', 'gm-forget'].includes(data.type)) return;
+       'gm-page-photos', 'gm-borrow-private', 'gm-forget', 'gm-reviews-state'].includes(data.type)) return;
 
   const { source, ...payload } = data;
   send(payload);

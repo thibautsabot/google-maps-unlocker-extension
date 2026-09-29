@@ -87,6 +87,87 @@ const photoView = 'https://www.google.com/maps/@48.86,2.35,3a,75y,90t/data=!3m7'
     !world.did.includes('RELOAD'));
 }
 
+// --- the review limit -------------------------------------------------------
+{
+  const off = fakeBrowser({ features: { reviewroll: false }, saved: savedSession([cookie('NID', 'saved-one')]) });
+  const sendOff = loadBackground(off);
+  await sendOff({ type: 'gm-reviews-state', limited: true, url: place });
+
+  t.check('reviews off: a limited page changes nothing', !off.did.length);
+}
+
+{
+  const world = fakeBrowser({ features: { reviewroll: true }, saved: savedSession([cookie('NID', 'saved-one')]) });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send({ type: 'gm-reviews-state', limited: true, url: place });
+
+  t.check('reviews: a limited page swaps in the saved session',
+    world.did.includes('cookie NID=saved-one'));
+  t.check('reviews: and reloads the tab', world.did.includes('RELOAD'));
+
+  // A photo report during a review swap must not decide the swap.
+  world.did.length = 0;
+  await send({ type: 'gm-hello', url: place });
+  await send({ type: 'gm-page-photos', photos: 3, final: true, url: place });
+  t.check('reviews: photo counts do not judge a review swap',
+    !world.did.some((d) => d.includes('verdict')));
+
+  await wait(9600);
+  t.check('reviews: a swapped page that shows no limit is a success',
+    world.did.some((d) => d.startsWith('TOAST') && d.includes('review limit')));
+}
+
+{
+  const world = fakeBrowser({ features: { reviewroll: true }, saved: savedSession([cookie('NID', 'saved-one')]) });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-reviews-state', limited: true, url: place });
+  world.did.length = 0;
+  await send({ type: 'gm-hello', url: place });
+  await send({ type: 'gm-reviews-state', limited: true, url: place });
+
+  t.check('reviews: a swapped page still limited is not a success',
+    !world.did.some((d) => d.startsWith('TOAST')));
+  t.check('reviews: and the next session is tried', world.did.some((d) => d.startsWith('private window')));
+}
+
+// A photo swap is already reloading the tab; a limited review page from the
+// old load must not start a second one.
+{
+  const world = fakeBrowser({ features: { photos: true, reviewroll: true },
+    saved: savedSession([cookie('NID', 'saved-one')]) });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send(capped);
+  const reloads = () => world.did.filter((d) => d === 'RELOAD').length;
+  const before = reloads();
+  await send({ type: 'gm-reviews-state', limited: true, url: place });
+
+  t.check('both on: a limited review page during a photo swap starts no second swap',
+    reloads() === before && !world.did.some((d) => d.startsWith('private window')));
+  world.listeners['tab-removed'](1);
+}
+
+// A gallery that comes back fine must not settle a swap made for reviews.
+{
+  const world = fakeBrowser({ features: { photos: true, reviewroll: true },
+    saved: savedSession([cookie('NID', 'saved-one')]) });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send({ type: 'gm-reviews-state', limited: true, url: place });
+  await send({ type: 'gm-hello', url: place });
+  await send({ type: 'gm-roll-outcome', firstPage: 20, serverTotal: 45, asked: 20 });
+  await wait(300);
+
+  t.check('both on: a good gallery does not call a review swap a success',
+    !world.did.some((d) => d.startsWith('TOAST')));
+  world.listeners['tab-removed'](1);       // its settle timer must not outlive the test
+}
+
 // --- a lift that worked -----------------------------------------------------
 {
   const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });

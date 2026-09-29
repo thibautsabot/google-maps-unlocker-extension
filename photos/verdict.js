@@ -151,6 +151,10 @@ const scheduleDecision = (tabId, ms, worked, why) => {
 
 // --- what the reloaded page reports -----------------------------------------
 
+// A swap made for the review limit is judged by the reviews script, not by
+// counting photos.
+const forPhotos = (tabId) => pending.get(tabId)?.by !== 'reviews';
+
 // The reloaded page has announced itself. The previous load's photo count
 // is no longer this page's. If a swap is waiting, start the silence clock.
 function onHello(msg, tabId) {
@@ -159,21 +163,22 @@ function onHello(msg, tabId) {
 
   pageCount.delete(tabId);
   gaveExtraTime.delete(tabId);
-  if (!pending.has(tabId)) return;
+  onReviewsHello(msg, tabId);
+  if (!pending.has(tabId) || !forPhotos(tabId)) return;
 
   scheduleDecision(tabId, SILENCE_MS, true, 'the page is up and has asked for nothing');
 }
 
 // Silence meant nothing: a request is on its way, and the reply decides.
 function onAsking(tabId) {
-  if (tabId == null || !pending.has(tabId)) return;
+  if (tabId == null || !pending.has(tabId) || !forPhotos(tabId)) return;
   scheduleDecision(tabId, REPLY_MS, false, 'a photo request is in flight');
 }
 
 // That request was the single photo on screen. It says nothing about the
 // cap, so go back to judging by silence.
 function onIdle(tabId) {
-  if (tabId == null || !pending.has(tabId)) return;
+  if (tabId == null || !pending.has(tabId) || !forPhotos(tabId)) return;
   scheduleDecision(tabId, SILENCE_MS, true, 'that request was for a single photo');
 }
 

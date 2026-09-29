@@ -1,20 +1,21 @@
-GM Native Maps — Photos & Opening Hours 11.2.0
+GM Native Maps — Photos, Reviews & Hours 11.4.2
 
 Firefox WebExtension for Google Maps.
 
 
 Switching it on
 ---------------
-Both features are off when installed. The toolbar button opens a panel with
+The features are off when installed. The toolbar button opens a panel with
 a switch for each.
 
 Opening hours applies at once, in both directions: it is a click handler,
-and it starts or stops the moment it is told. The photo side cannot, because
+and it starts or stops the moment it is told. Reviews do the same.
+The photo side cannot, because
 it works out what to do from the answer to a request the page has already
 made — so it has nothing to act on until the page asks again. The panel
 offers a button to reload the tab when that is what is needed.
 
-Off means off: with neither switched on, no cookie is read or written, no
+Off means off: with none switched on, no cookie is read or written, no
 window is opened, no tab is reloaded, and nothing is logged. The photo
 feature in particular replaces your Google cookies and reloads your tab,
 which is not a thing to start doing to somebody who has merely installed an
@@ -23,12 +24,47 @@ extension.
 
 What it does
 ------------
-Two unrelated things, both about content Google already serves to anonymous
-visitors but does not show you.
+Three things, all about content Google already serves to anonymous visitors
+but does not show you.
 
 Opening hours: Maps renders the whole week but keeps it collapsed, and its own
 expand handler is what raises the sign-in dialog. The extension intercepts the
 click and undoes the collapsing styles itself. This just works, no commands.
+
+Reviews: the place arrives with a few review texts, and scrolling asks for
+the next page. Sort and the review search ask a sign-in check first and
+raise the dialog when it says signed out. The see-more control does not
+ask: its click calls the sign-in action directly. None of this is matched
+by the words on the button, which change with the language.
+
+The check is renamed in every build, so the extension finds it in the
+script Maps just loaded: a one-line read of one field, called beside field
+259. While the switch is on it answers as a signed-in session would, and
+sort and search carry on. The see-more control's sign-in action is the one
+named in that check, and the list-opening action is the else branch beside
+it. The button's own action is the sign-in dialog. On the place overview, before
+Maps reads the click, the button is pointed at the rating chart's action.
+That name does not change between builds, and once the check answers no it
+opens the list. The same button on the reviews tab is already inside that
+list, so the click is not sent to the chart. It is stopped, and the list
+scroller is moved to the end, which is what asks for the next page. The
+words on the button, and the name of the reviews tab, are read out of the
+same script, so they follow the language of the page.
+The limited-view notice is the sentence from that same script, in whatever
+language the script was served.
+
+A limited session is given one short page of reviews and no way to ask for
+the next (measured: 5 reviews, no continuation token, and an end marker; a
+good session gave 10 and a token, then pages of 10). Sort and search start a
+new query and stay limited, so nothing on the page can lift it. This is a
+separate switch, "Full review list", because it swaps cookies and reloads the
+tab, which the review controls above never do. The two can be on alone or
+together. Maps draws its see-more button only for a limited session, so that
+button being on the page is the sign. When it appears, the extension borrows
+another session the way the photo cap does, reloads, and judges the new load
+by the button being absent. A swapped page that still shows it is discarded
+and the next is tried. Photo counts are not used to judge a swap made for
+reviews.
 
 Photos: Maps caps the gallery for some sessions. The extension notices and
 lifts the cap by putting a session in place that is not capped, reloading the
@@ -251,6 +287,18 @@ photos/    read.js       reading Google's payloads: how many photos, how
                          capped
 
 hours/     hours.js      the opening hours. Touches nothing else
+
+reviewroll/ roll.js      the review limit. Borrows a session when Maps shows
+                         its see-more button, and judges the reload by the
+                         button being gone. Shares the swap and the saved
+                         session with photos/, and nothing else
+
+reviews/   ungate.js     Review sort, review search, and the
+                         see-more control. Finds the sign-in check in
+                         the script Maps loaded, opens the list from
+                         the overview, asks the open list for the next
+                         page, and removes the limited-view notice.
+                         Touches nothing else
 
 popup/     popup.html    the toolbar panel
            popup.js      one switch per catalogue entry, by name of none

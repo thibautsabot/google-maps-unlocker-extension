@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "GM Native Maps — Photos & Opening Hours",
-  "version": "11.2.0",
-  "description": "Shows the full week of opening hours, and lifts Google's photo cap by borrowing the cookies of a private session. Both off until switched on in the toolbar.",
+  "name": "GM Native Maps — Photos, Reviews & Hours",
+  "version": "11.4.2",
+  "description": "Shows the full week of opening hours, lifts Google's photo cap by borrowing a private session, and opens Plus d'avis, review sort, and review search without the sign-in prompt. All off until switched on in the toolbar.",
   "action": {
     "default_title": "GM Native Maps",
     "default_popup": "popup/popup.html"
@@ -28,6 +28,7 @@
       "photos/cookies.js",
       "photos/verdict.js",
       "photos/roll.js",
+      "reviewroll/roll.js",
       "common/dispatch.js"
     ],
     "service_worker": "service-worker.js"
@@ -42,7 +43,8 @@
         "photos/read.js",
         "photos/watch.js",
         "photos/ui.js",
-        "hours/hours.js"
+        "hours/hours.js",
+        "reviews/ungate.js"
       ],
       "run_at": "document_start",
       "world": "MAIN"
