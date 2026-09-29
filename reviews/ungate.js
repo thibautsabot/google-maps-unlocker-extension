@@ -539,31 +539,49 @@
 
   watch();
 
-  // The server's sign of a limited session: the see-more button, or the
-  // limited-view notice that this script hides. Either is enough.
+  // What this load's review section says about the session. Limited: Maps
+  // drew its see-more button, or the notice this script hides. Clear: the
+  // rating chart is up and neither is. The chart is found by its action
+  // name, which the bundle spells the same way in every build. A page that
+  // shows neither has said nothing, and is not taken as clear.
+  const seeMoreShown = () => !!seeMore
+    && [...document.querySelectorAll('button, [role="button"]')]
+      .some((b) => norm(b.getAttribute('aria-label') || b.textContent).startsWith(norm(seeMore)));
+
+  const chartShown = () => !!document.querySelector('[jsaction*="reviewChart.moreReviews"]');
+
   window.__GM_REVIEWS__ = {
-    limited: () => !!document.querySelector(`[${MARK}]`) || (!!seeMore
-      && [...document.querySelectorAll('button, [role="button"]')]
-        .some((b) => norm(b.getAttribute('aria-label') || b.textContent).startsWith(norm(seeMore))))
+    limited: () => !!document.querySelector(`[${MARK}]`) || seeMoreShown(),
+    clear: () => chartShown() && !seeMoreShown() && !document.querySelector(`[${MARK}]`)
   };
 
   const tell = (message) => {
     try { window.postMessage({ source: 'gm-native-maps', ...message }, location.origin); } catch (_) {}
   };
 
-  // The server's sign of a limited session is the see-more button itself.
-  // It is reported only when seen, and only once per load. A page that never
-  // shows it stays silent, which the background reads as not limited.
-  let stateSent = false;
-  let rollOn = false;
+  // Reported at most once each per load, and a limited report can follow a
+  // clear one. A clear needs two looks in a row, so a page still drawing
+  // its chart before its button is not read as clear.
+  let sent = '';
+  let clearLooks = 0;
+  let photosOn = false;
 
   function reportState() {
-    if (stateSent || !rollOn || !seeMore) return;
-    if (!window.__GM_REVIEWS__.limited()) return;
-    stateSent = true;
+    if (!photosOn || !seeMore || sent === 'limited') return;
 
-    console.debug(LOG, 'this session is limited');
-    tell({ type: 'gm-reviews-state', limited: true, url: location.href });
+    if (window.__GM_REVIEWS__.limited()) {
+      sent = 'limited';
+      console.debug(LOG, 'this session is limited');
+      tell({ type: 'gm-reviews-state', limited: true, url: location.href });
+      return;
+    }
+
+    clearLooks = window.__GM_REVIEWS__.clear() ? clearLooks + 1 : 0;
+    if (clearLooks >= 2 && !sent) {
+      sent = 'clear';
+      console.debug(LOG, 'this session shows the whole review section');
+      tell({ type: 'gm-reviews-state', limited: false, url: location.href });
+    }
   }
 
   setInterval(reportState, 1000);
@@ -575,7 +593,7 @@
     if (!data || data.source !== 'gm-native-maps' || data.type !== 'gm-settings') return;
 
     reviewsOn = !!data.features?.reviews;
-    rollOn = !!data.features?.reviewroll;
+    photosOn = !!data.features?.photos;
     if (reviewsOn) hideNotice();
     else showNotice();
   });

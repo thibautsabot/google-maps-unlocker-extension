@@ -38,6 +38,15 @@ const lastPlaceUrl = new Map();
 const gaveExtraTime = new Set();
 const decisionTimers = new Map();
 
+// What each tab's review section has said this load: 'limited' when Maps
+// drew its see-more button, 'clear' when it drew the rating chart without
+// one. Absent until the page says. A photo count alone would let a swap
+// through that the review section still rejects.
+const reviewState = new Map();
+const waitedForReviews = new Set();
+
+const REVIEWS_MS = 4000;     // one extra wait for the review section to speak
+
 const SILENCE_MS = 1500;    // how long "nothing asked" has to last before it counts
 const REPLY_MS = 25000;      // how long a request may take before the swap is a failure
 const EXTRA_MS = 3000;       // one more wait when the first photo count is too low to trust
@@ -111,6 +120,12 @@ function decideByPhotoCount(tabId, why) {
   const photos = pageCount.get(tabId) || 0;
 
   if (photos >= ENOUGH_PHOTOS) {
+    if (!reviewState.has(tabId) && !waitedForReviews.has(tabId)) {
+      waitedForReviews.add(tabId);
+      scheduleDecision(tabId, REVIEWS_MS, true, `${photos} photos, waiting for the review section`);
+      return;
+    }
+
     settle(tabId, true, `${why}, and the page carried ${photos} photos`);
     return;
   }
@@ -151,10 +166,6 @@ const scheduleDecision = (tabId, ms, worked, why) => {
 
 // --- what the reloaded page reports -----------------------------------------
 
-// A swap made for the review limit is judged by the reviews script, not by
-// counting photos.
-const forPhotos = (tabId) => pending.get(tabId)?.by !== 'reviews';
-
 // The reloaded page has announced itself. The previous load's photo count
 // is no longer this page's. If a swap is waiting, start the silence clock.
 function onHello(msg, tabId) {
@@ -163,22 +174,23 @@ function onHello(msg, tabId) {
 
   pageCount.delete(tabId);
   gaveExtraTime.delete(tabId);
-  onReviewsHello(msg, tabId);
-  if (!pending.has(tabId) || !forPhotos(tabId)) return;
+  reviewState.delete(tabId);
+  waitedForReviews.delete(tabId);
+  if (!pending.has(tabId)) return;
 
   scheduleDecision(tabId, SILENCE_MS, true, 'the page is up and has asked for nothing');
 }
 
 // Silence meant nothing: a request is on its way, and the reply decides.
 function onAsking(tabId) {
-  if (tabId == null || !pending.has(tabId) || !forPhotos(tabId)) return;
+  if (tabId == null || !pending.has(tabId)) return;
   scheduleDecision(tabId, REPLY_MS, false, 'a photo request is in flight');
 }
 
 // That request was the single photo on screen. It says nothing about the
 // cap, so go back to judging by silence.
 function onIdle(tabId) {
-  if (tabId == null || !pending.has(tabId) || !forPhotos(tabId)) return;
+  if (tabId == null || !pending.has(tabId)) return;
   scheduleDecision(tabId, SILENCE_MS, true, 'that request was for a single photo');
 }
 
@@ -204,7 +216,23 @@ async function onPagePhotos(msg, tabId) {
   await lift(msg, tabId);
 }
 
+// The review section spoke. A limited one fails the swap in flight, or, on
+// a page nobody swapped, asks for another session. A clear one is only
+// evidence: photos still decide.
+async function onReviewState(msg, tabId) {
+  if (tabId == null) return;
+  rememberUrl(tabId, msg.url);
+  reviewState.set(tabId, msg.limited ? 'limited' : 'clear');
+  if (!msg.limited) return;
+
+  if (pending.has(tabId)) settle(tabId, false, 'the review section still shows the limit');
+
+  await say(tabId, 'reviews: this session is limited, trying another');
+  await lift({ galleryUrl: msg.url }, tabId);
+}
+
 handles(null, 'gm-hello', (msg, tabId) => onHello(msg, tabId));
+handles('photos', 'gm-reviews-state', onReviewState);
 handles('photos', 'gm-gallery-asking', (msg, tabId) => onAsking(tabId));
 handles('photos', 'gm-gallery-idle', (msg, tabId) => onIdle(tabId));
 handles('photos', 'gm-page-photos', onPagePhotos);
@@ -214,6 +242,8 @@ onTabGone((tabId) => {
   pending.delete(tabId);
   pageCount.delete(tabId);
   gaveExtraTime.delete(tabId);
+  reviewState.delete(tabId);
+  waitedForReviews.delete(tabId);
   lastUrl.delete(tabId);
   lastPlaceUrl.delete(tabId);
 });

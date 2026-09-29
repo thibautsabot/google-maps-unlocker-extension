@@ -105,13 +105,7 @@ function onPagingTimeout(tabId) {
 // capped is the gallery's answer. If a swap is in flight, that answer is
 // also the verdict on the swap.
 async function act(capped, msg, tabId, why) {
-  const swap = pending.get(tabId);
-
-  // A swap made for reviews is judged by the review page. A gallery that
-  // came back fine says nothing more than that. One that came back capped
-  // means the borrowed session is bad for both.
-  if (swap?.by === 'reviews' && !capped) return;
-  if (swap) settle(tabId, !capped, why);
+  if (pending.has(tabId)) settle(tabId, !capped, why);
 
   if (!capped) {
     tried.delete(tabId);
@@ -141,11 +135,11 @@ function markTried(tabId, kind) {
 
 // Puts the saved cookies back and reloads. The on-screen note waits until
 // verdict.js says the reload actually lifted the cap.
-async function applySaved(saved, tabId, by = 'photos') {
+async function applySaved(saved, tabId) {
   const written = await swapTo(saved.cookies);
 
-  pending.set(tabId, { kind: 'saved', cookies: saved.cookies, by,
-    text: `Reused the session saved earlier to lift Google’s ${by === 'reviews' ? 'review limit' : 'photo cap'}.` });
+  pending.set(tabId, { kind: 'saved', cookies: saved.cookies,
+    text: 'Reused the session saved earlier to lift Google’s photo and review limits.' });
 
   await say(tabId, `put back ${written} cookies from the session saved `
     + `${new Date(saved.savedAt).toLocaleString()} — reloading`);
@@ -168,7 +162,7 @@ async function lift(msg, tabId) {
       : 'Google had replaced the saved cookies since they were saved');
 
     markTried(tabId, 'saved');
-    await applySaved(saved, tabId, msg?.by);
+    await applySaved(saved, tabId);
     return;
   }
 
@@ -286,9 +280,8 @@ async function onBorrowPrivate(msg, tabId) {
   const written = await swapTo(source);
   await keepGoodRoll(source);
 
-  const by = msg?.by || 'photos';
-  pending.set(tabId, { kind: 'borrowed', cookies: source, by,
-    text: `Borrowed a session from a private window to lift Google’s ${by === 'reviews' ? 'review limit' : 'photo cap'}.` });
+  pending.set(tabId, { kind: 'borrowed', cookies: source,
+    text: 'Borrowed a session from a private window to lift Google’s photo and review limits.' });
 
   await finish(`borrowed ${written} cookies from a private session and saved them — reloading`);
   await reload(tabId);

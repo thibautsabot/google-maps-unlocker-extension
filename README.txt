@@ -1,4 +1,4 @@
-GM Native Maps — Photos, Reviews & Hours 11.4.2
+GM Native Maps — Photos, Reviews & Hours 11.5.0
 
 Firefox WebExtension for Google Maps.
 
@@ -56,15 +56,20 @@ language the script was served.
 A limited session is given one short page of reviews and no way to ask for
 the next (measured: 5 reviews, no continuation token, and an end marker; a
 good session gave 10 and a token, then pages of 10). Sort and search start a
-new query and stay limited, so nothing on the page can lift it. This is a
-separate switch, "Full review list", because it swaps cookies and reloads the
-tab, which the review controls above never do. The two can be on alone or
-together. Maps draws its see-more button only for a limited session, so that
-button being on the page is the sign. When it appears, the extension borrows
-another session the way the photo cap does, reloads, and judges the new load
-by the button being absent. A swapped page that still shows it is discarded
-and the next is tried. Photo counts are not used to judge a swap made for
-reviews.
+new query and stay limited, so nothing on the page can lift it. The photo
+cap and this limit come from the same session, so one swap lifts both and
+the "Full photos and reviews" switch covers both. It is a different box from
+the review controls above because it swaps cookies and reloads the tab, which
+those never do.
+
+Maps draws its see-more button only for a limited session. That button, or
+the limited-view notice, is the sign; the rating chart on a page with
+neither is the sign that the section loaded whole. Both are found without
+class names: the button by the words the script gives it, the chart by its
+action name. After a swap the page is judged on photos and reviews together:
+enough photos, and the review section not limited. A swapped page that still
+shows the limit is discarded and the next session is tried. A page whose
+review section never speaks is not blamed; photos alone then decide.
 
 Photos: Maps caps the gallery for some sessions. The extension notices and
 lifts the cap by putting a session in place that is not capped, reloading the
@@ -287,11 +292,6 @@ photos/    read.js       reading Google's payloads: how many photos, how
                          capped
 
 hours/     hours.js      the opening hours. Touches nothing else
-
-reviewroll/ roll.js      the review limit. Borrows a session when Maps shows
-                         its see-more button, and judges the reload by the
-                         button being gone. Shares the swap and the saved
-                         session with photos/, and nothing else
 
 reviews/   ungate.js     Review sort, review search, and the
                          see-more control. Finds the sign-in check in

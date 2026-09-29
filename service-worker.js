@@ -9,6 +9,5 @@ importScripts(
   'photos/cookies.js',
   'photos/verdict.js',
   'photos/roll.js',
-  'reviewroll/roll.js',
   'common/dispatch.js'
 );
