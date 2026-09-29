@@ -11,6 +11,32 @@ const blind = { type: 'gm-roll-outcome', firstPage: 10, serverTotal: 45, asked: 
 const place = 'https://www.google.com/maps/place/X/@48.86,2.35,15z';
 const photoView = 'https://www.google.com/maps/@48.86,2.35,3a,75y,90t/data=!3m7';
 
+// --- cookie consent gate ----------------------------------------------------
+{
+  const world = fakeBrowser({ features: { hours: false, photos: true, reviews: false },
+    cookieConsent: false, saved: savedSession([cookie('NID', 'saved-one')]) });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send(capped);
+  await send({ type: 'gm-borrow-private' });
+
+  t.check('photos enabled without explicit cookie consent: no cookie access or reload',
+    !world.did.some((d) => d.startsWith('cookie') || d === 'RELOAD' || d.startsWith('private')));
+}
+
+// --- private-window permission ----------------------------------------------
+{
+  const world = fakeBrowser({ incognitoAllowed: false });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-borrow-private' });
+  t.check('private access denied: no cookies changed and no reload',
+    !world.did.some((d) => d.startsWith('cookie') || d === 'RELOAD'));
+  t.check('private access denied: user is told which setting to enable',
+    world.did.some((d) => d.includes('private-window access is off')));
+}
+
 // --- switched off -----------------------------------------------------------
 {
   const world = fakeBrowser({ features: { hours: false, photos: false } });

@@ -3,76 +3,21 @@
 
   // Sort and the magnifying glass ask one question before they do
   // anything: are we signed out of a session Maps has marked limited? Yes
-  // means the sign-in dialog. One see-more control does not ask. Its click
-  // calls the sign-in action outright, so answering the question is not
-  // enough for it.
+  // means the sign-in dialog. The see-more control does not ask, so on the
+  // overview its click is pointed at an action that opens the list.
   //
   // Names are rewritten every time Maps ships. What stays is the shape.
   // The check is a one-line read of field 4, called as `name(session())`
-  // next to field 259, and the else of that check is the action that opens
-  // the list. The see-more control calls the sign-in action from that same
-  // check. While the switch is on, the check answers no, and that sign-in
-  // action opens the list instead.
-  //
-  // That sign-in action is one field on an object Maps builds while the
-  // script is still running. Asking for the object afterwards is a
-  // different lookup and the click never goes through it. The build is
-  // caught as the script assigns it: it is the only constructor that
-  // fills dozens of action slots.
-  //
-  // The limited-view notice is the sentence in that same script, not a
-  // class and not a label. Classes on that node are generated and do not
-  // survive a build. The sentence is whatever language the script was
-  // served in.
+  // next to field 259. While the switch is on it answers as a signed-in
+  // session would. Everything else, the button's words, the tab's name and
+  // the limited-view sentence, is read out of the same script, so it follows
+  // the language the page was served in. No class names are used.
 
   let reviewsOn = false;
   let notice = '';
   let seeMore = '';
   let reviewsTab = '';
-  let redirect = null;
-  let runsHooked = false;
-
-  // Instances of the actions object, caught as Maps constructs them.
-  const built = [];
-
-  // Maps does `this._ = this._ || {}` and then assigns into that object.
-  // Putting the watch here, before any page script, means the constructor
-  // is wrapped before anything calls it.
-  function watchBuild(Original) {
-    function Built() {
-      const instance = Reflect.construct(Original, arguments, Original);
-      built.push(instance);
-      return instance;
-    }
-
-    Built.prototype = Original.prototype;
-    Built.__gmBuilt = true;
-    return Built;
-  }
-
-  function installNamespace() {
-    const current = window._;
-    const root = current && typeof current === 'object' ? current : {};
-    if (root.__gmArmed) return;
-
-    root.__gmArmed = true;
-    window._ = new Proxy(root, {
-      set(target, prop, value) {
-        try {
-          if (typeof value === 'function' && !value.__gmBuilt && value.length === 0) {
-            const src = Function.prototype.toString.call(value);
-            if (src.split('=new _.').length - 1 >= 40) value = watchBuild(value);
-          }
-        } catch (_) {}
-
-        // Set on the target. Passing the proxy back as the receiver
-        // defines the property on the proxy and re-enters this trap.
-        return Reflect.set(target, prop, value, target);
-      }
-    });
-  }
-
-  installNamespace();
+  let checkFound = '';
 
   const LOG = '[GM-REVIEWS]';
   const MARK = 'data-gm-reviews-hidden';
@@ -166,167 +111,6 @@
     return false;
   }
 
-  // The open list already pages itself when its scroller nears the bottom.
-  // The see-more button sits in that list and only knows how to open the
-  // sign-in dialog, so the click is dropped and the scroller is moved to
-  // the end. That is the same request scrolling would send.
-  //
-  // Maps listens for scroll on one element of the list, and a scroll event
-  // does not bubble. A short list may not scroll at all, so no real event
-  // ever fires. The event is sent to every ancestor of the button, and the
-  // ones that can scroll are moved to the end first.
-  function pageList(button) {
-    let sent = 0;
-    const scrollers = [];
-    for (let node = button.parentElement; node && node !== document.documentElement; node = node.parentElement) {
-      try {
-        const style = getComputedStyle(node);
-        if (/(auto|scroll)/.test(style.overflowY) && node.scrollHeight > node.clientHeight) {
-          node.scrollTop = node.scrollHeight;
-          scrollers.push({
-            top: Math.round(node.scrollTop),
-            height: node.scrollHeight,
-            client: node.clientHeight
-          });
-        }
-      } catch (_) {}
-      node.dispatchEvent(new Event('scroll'));
-      sent += 1;
-    }
-    return { sent, scrollers };
-  }
-
-  // Says what came of the scroll, so nobody has to open the network tab.
-  // A request is any batchexecute call in the next few seconds, named by
-  // its rpc. A review is any node carrying the review's own id attribute.
-  function watchPaging() {
-    const count = () => document.querySelectorAll('[data-review-id]').length;
-    const before = count();
-    const calls = [];
-    let observer = null;
-
-    try {
-      observer = new PerformanceObserver((list) => {
-        for (const entry of list.getEntries()) {
-          if (!entry.name.includes('batchexecute')) continue;
-          let rpc = entry.name;
-          try { rpc = new URL(entry.name).searchParams.get('rpcids') || rpc; } catch (_) {}
-          calls.push(rpc);
-        }
-      });
-      observer.observe({ type: 'resource' });
-    } catch (_) {}
-
-    setTimeout(() => {
-      try { observer?.disconnect(); } catch (_) {}
-      console.debug(LOG, 'reviews tab: after 4s', {
-        requests: calls,
-        reviewsBefore: before,
-        reviewsAfter: count()
-      });
-    }, 4000);
-  }
-
-  // Both actions are fields of one object Maps builds once. The field
-  // names are the ones from the check. The getter is the call that reads
-  // that object back; the call that registers it is not.
-  function actionHost(source, signIn, open) {
-    const signAt = source.indexOf(`this.${signIn}=new _.`);
-    const openAt = source.indexOf(`this.${open}=new _.`, signAt);
-    if (signAt < 0 || openAt < 0 || openAt - signAt > 20000) return null;
-
-    const made = /^[A-Za-z0-9$]+/.exec(source.slice(signAt + `this.${signIn}=new _.`.length));
-    if (!made) return null;
-    if (!source.startsWith(made[0], openAt + `this.${open}=new _.`.length)) return null;
-
-    const fn = source.lastIndexOf('=function()', signAt);
-    const ctor = /_\.([A-Za-z0-9$]+)$/.exec(source.slice(Math.max(0, fn - 40), fn));
-    if (!ctor) return null;
-
-    const calls = source.matchAll(new RegExp(String.raw`_\.([A-Za-z0-9$]+)\(_\.${escapeReg(ctor[1])}\)`, 'g'));
-    let getter = '';
-    for (const call of calls) {
-      const def = new RegExp(String.raw`_\.${escapeReg(call[1])}=function\(([A-Za-z0-9$]+)(?:,[A-Za-z0-9$]+)?\)\{`);
-      const bodyAt = def.exec(source);
-      if (!bodyAt) continue;
-      const body = source.slice(bodyAt.index, bodyAt.index + 400);
-      if (body.includes('.register')) continue;
-      if (!body.includes('return ')) continue;
-      getter = call[1];
-      break;
-    }
-    if (!getter) return null;
-
-    return { ctor: ctor[1], getter, action: made[0] };
-  }
-
-  function hasPair(actions) {
-    if (!redirect || !actions) return false;
-    const sign = actions[redirect.signIn];
-    const list = actions[redirect.open];
-    return !!sign && !!list && typeof sign.run === 'function' && typeof list.run === 'function';
-  }
-
-  // The open action sitting next to this sign-in slot, if this object is
-  // one Maps built for these controls.
-  function listBeside(sign) {
-    if (!redirect) return null;
-    for (const actions of built) {
-      if (actions[redirect.signIn] === sign && hasPair(actions)) return actions[redirect.open];
-    }
-    return null;
-  }
-
-  // Every action shares one run. The see-more click is the call that
-  // passes a flow and a place key and nothing else. While the switch is
-  // on, that call opens the list. Every other call is left alone.
-  function hookRuns() {
-    if (runsHooked || !redirect) return false;
-
-    const proto = window._?.[redirect.action]?.prototype;
-    const real = proto?.run;
-    if (typeof real !== 'function' || real.__gmHook) {
-      runsHooked = typeof real === 'function' && !!real.__gmHook;
-      return runsHooked;
-    }
-
-    function hooked(payload) {
-      const seeMore = payload && Object.keys(payload).length === 2
-        && Object.prototype.hasOwnProperty.call(payload, 'flow')
-        && Object.prototype.hasOwnProperty.call(payload, 'Kb');
-      const list = reviewsOn && seeMore ? listBeside(this) : null;
-      if (list) return real.call(list, { flow: payload.flow });
-      return real.call(this, payload);
-    }
-
-    hooked.__gmHook = true;
-    proto.run = hooked;
-    runsHooked = true;
-    console.debug(LOG, 'see-more opens the list');
-    return true;
-  }
-
-  // Fallback for a build that was constructed before the watch was in
-  // place. The same getter Maps uses to read the object back.
-  function rememberBuilt() {
-    if (!redirect || built.some(hasPair)) return;
-
-    const root = window._;
-    const ctor = root?.[redirect.ctor];
-    const get = root?.[redirect.getter];
-    if (typeof ctor !== 'function' || typeof get !== 'function') return;
-
-    try {
-      const actions = get(ctor);
-      if (hasPair(actions)) built.push(actions);
-    } catch (_) {}
-  }
-
-  function finishRedirect() {
-    rememberBuilt();
-    hookRuns();
-  }
-
   function wrap(name) {
     const root = window._;
     if (!root || typeof root !== 'object') return false;
@@ -349,7 +133,6 @@
       set(fn) { if (typeof fn === 'function') real = fn; }
     });
 
-    console.debug(LOG, 'sign-in check wrapped');
     return true;
   }
 
@@ -366,6 +149,7 @@
   function learn(source) {
     const name = checkName(source);
     if (!name) return;
+    checkFound = name;
 
     const sentence = noticeIn(source, name);
     if (sentence) notice = sentence;
@@ -385,12 +169,6 @@
     if (actions) {
       const tab = tabLabel(source, actions.open);
       if (tab) reviewsTab = tab;
-
-      const host = actionHost(source, actions.signIn, actions.open);
-      if (host) {
-        redirect = { signIn: actions.signIn, open: actions.open, ...host };
-        finishRedirect();
-      }
     }
 
     if (reviewsOn) hideNotice();
@@ -475,60 +253,31 @@
       schedule();
     };
 
-    // The place may finish building after the script has been read. A click
-    // is late enough that the actions object exists, and it is early enough
-    // that the handler has not run yet.
-    //
     // On the place overview the see-more button's own action is the
     // sign-in dialog. The rating chart's action is a fixed name, and once
     // the check answers no it opens the list. The click is still the
     // user's. Only the action name on the button is changed, before Maps
     // reads it.
     //
-    // On the reviews tab that same button is sitting in a list that is
-    // already open. Pointing it at the chart asks to open the list again.
-    // The click is stopped, and the list's own scroller is moved to the
-    // end so it asks for the next page.
+    // On the reviews tab the list is already open, and the button stands for
+    // the reviews the server refused to page. Opening the list again does
+    // nothing, and the sign-in dialog would only get in the way, so the click
+    // is stopped. Getting those reviews is the session swap's job.
     document.addEventListener('click', (event) => {
-      if (reviewsOn) finishRedirect();
-      if (!reviewsOn || !seeMore || !event.target?.closest) {
-        if (event.target?.closest?.('button, [role="button"]')) {
-          console.debug(LOG, 'click ignored: not ready', { on: reviewsOn, seeMore });
-        }
-        return;
-      }
+      if (!reviewsOn || !seeMore || !event.target?.closest) return;
 
       const button = event.target.closest('button, [role="button"]');
       if (!button) return;
+
       const label = norm(button.getAttribute('aria-label') || button.textContent);
-      if (!label.startsWith(norm(seeMore))) {
-        if (/\(\d+\)\s*$/.test(label)) {
-          console.debug(LOG, 'click ignored: label does not match', { label, seeMore });
-        }
-        return;
-      }
+      if (!label.startsWith(norm(seeMore))) return;
 
-      const selected = reviewsTabSelected();
-      console.debug(LOG, 'see-more clicked', {
-        label,
-        tab: reviewsTab,
-        tabSelected: selected,
-        tabs: [...document.querySelectorAll('[role="tab"]')].map((t) => ({
-          text: norm(t.getAttribute('aria-label') || t.textContent),
-          selected: t.getAttribute('aria-selected')
-        }))
-      });
-
-      if (selected) {
+      if (reviewsTabSelected()) {
         event.preventDefault();
         event.stopImmediatePropagation();
-        const paged = pageList(button);
-        watchPaging();
-        console.debug(LOG, 'reviews tab: asked the list for the next page', { tab: reviewsTab, ...paged });
         return;
       }
 
-      console.debug(LOG, 'overview: sent to the list', { tab: reviewsTab });
       delete button.__jsaction;
       button.setAttribute('jsaction', 'pane.reviewChart.moreReviews');
     }, true);
@@ -551,6 +300,9 @@
   const chartShown = () => !!document.querySelector('[jsaction*="reviewChart.moreReviews"]');
 
   window.__GM_REVIEWS__ = {
+    // What discovery found in the Maps script. Read by the tests, and handy
+    // in the console when a Maps update leaves a feature doing nothing.
+    learned: () => ({ check: checkFound, notice, seeMore, reviewsTab }),
     limited: () => !!document.querySelector(`[${MARK}]`) || seeMoreShown(),
     clear: () => chartShown() && !seeMoreShown() && !document.querySelector(`[${MARK}]`)
   };

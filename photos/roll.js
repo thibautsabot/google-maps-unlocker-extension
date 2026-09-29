@@ -238,6 +238,17 @@ async function closeWindow(opened) {
 // Copies a private session into this tab and reloads. Returns false when
 // nothing new was swapped in, so the attempt is not counted against the five.
 async function onBorrowPrivate(msg, tabId) {
+  try {
+    if (browser.extension?.isAllowedIncognitoAccess
+      && !await browser.extension.isAllowedIncognitoAccess()) {
+      await say(tabId, 'private-window access is off. Open extension settings and allow this extension in private windows, then try again.');
+      return false;
+    }
+  } catch (_) {
+    await say(tabId, 'could not check private-window access. Check this extension’s private/incognito setting.');
+    return false;
+  }
+
   const url = msg.galleryUrl || lastUrl.get(tabId) || 'https://www.google.com/maps';
   let opened = null;
 

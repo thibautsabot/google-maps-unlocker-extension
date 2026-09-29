@@ -50,13 +50,20 @@ function publishFeatures(features) {
   } catch (_) {}
 }
 
-browser.storage.local.get(FEATURES_KEY)
-  .then((stored) => publishFeatures({ ...FEATURES_OFF, ...stored[FEATURES_KEY] }))
-  .catch((error) => console.warn(LOG, 'could not read which features are on', error));
+async function publishStoredFeatures() {
+  const stored = await browser.storage.local.get([FEATURES_KEY, COOKIE_CONSENT_KEY]);
+  const features = { ...FEATURES_OFF, ...stored[FEATURES_KEY] };
+  features.photos = features.photos && stored[COOKIE_CONSENT_KEY] === true;
+  publishFeatures(features);
+}
+
+publishStoredFeatures()
+  .catch((error) => console.warn(LOG, 'could not read which switches are on', error));
 
 browser.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || !changes[FEATURES_KEY]) return;
-  publishFeatures({ ...FEATURES_OFF, ...changes[FEATURES_KEY].newValue });
+  if (area !== 'local' || (!changes[FEATURES_KEY] && !changes[COOKIE_CONSENT_KEY])) return;
+  publishStoredFeatures()
+    .catch((error) => console.warn(LOG, 'could not update which switches are on', error));
 });
 
 window.addEventListener('message', (event) => {

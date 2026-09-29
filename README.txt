@@ -1,4 +1,4 @@
-GM Native Maps — Photos, Reviews & Hours 11.5.0
+Unlocker — for Google Maps™ 1.0.0
 
 Firefox WebExtension for Google Maps.
 
@@ -40,18 +40,21 @@ by the words on the button, which change with the language.
 The check is renamed in every build, so the extension finds it in the
 script Maps just loaded: a one-line read of one field, called beside field
 259. While the switch is on it answers as a signed-in session would, and
-sort and search carry on. The see-more control's sign-in action is the one
-named in that check, and the list-opening action is the else branch beside
-it. The button's own action is the sign-in dialog. On the place overview, before
-Maps reads the click, the button is pointed at the rating chart's action.
-That name does not change between builds, and once the check answers no it
-opens the list. The same button on the reviews tab is already inside that
-list, so the click is not sent to the chart. It is stopped, and the list
-scroller is moved to the end, which is what asks for the next page. The
-words on the button, and the name of the reviews tab, are read out of the
-same script, so they follow the language of the page.
-The limited-view notice is the sentence from that same script, in whatever
-language the script was served.
+sort and search carry on. The see-more control never asks the check: its
+own action is the sign-in dialog. On the place overview, before Maps reads
+the click, the button is pointed at the rating chart's action. That name
+does not change between builds, and once the check answers no it opens the
+list. On the reviews tab the list is already open and the button stands for
+reviews the server refused to page, so the click is stopped instead. The
+words on the button, the name of the reviews tab and the limited-view
+sentence are all read out of the same script, so they follow the language
+of the page.
+
+Tests for this read two saved slices of real Maps builds in tests/fixtures.
+When Maps ships a shape the extractors do not know, the feature goes quiet.
+Save the new build's slices there, and tests/discovery.test.mjs fails until
+the extractors follow. In the console, __GM_REVIEWS__.learned() shows what
+was found.
 
 A limited session is given one short page of reviews and no way to ask for
 the next (measured: 5 reviews, no continuation token, and an end marker; a
@@ -296,9 +299,13 @@ hours/     hours.js      the opening hours. Touches nothing else
 reviews/   ungate.js     Review sort, review search, and the
                          see-more control. Finds the sign-in check in
                          the script Maps loaded, opens the list from
-                         the overview, asks the open list for the next
-                         page, and removes the limited-view notice.
+                         the overview, and removes the limited-view
+                         notice. Reports whether the session is limited.
                          Touches nothing else
+
+store/      PUBLISHING.md, REVIEWER-NOTES.md: how to publish, and what to tell reviewers
+tools/      build.mjs makes the store zips in dist/; make-icons.mjs draws icons/
+icons/      the toolbar and store icons
 
 popup/     popup.html    the toolbar panel
            popup.js      one switch per catalogue entry, by name of none
@@ -332,8 +339,9 @@ Installation
 One folder, both browser families.
 
 Firefox    about:debugging -> This Firefox -> Load Temporary Add-on ->
-           manifest.json. Needs Firefox 128 or later, for content_scripts
-           world "MAIN".
+           manifest.json. Needs Firefox 140 or later: Mozilla's data
+           declaration only works from there. content_scripts world
+           "MAIN".
 
 Chromium   chrome://extensions (or edge://, vivaldi://, opera://) ->
            Developer mode -> Load unpacked -> this folder, then Details ->

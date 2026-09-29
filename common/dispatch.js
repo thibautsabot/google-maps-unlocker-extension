@@ -18,7 +18,9 @@ browser.runtime.onMessage.addListener((msg, sender) => {
 // said at startup. Runs when the extension is installed and when the
 // browser starts.
 async function announceReady() {
-  const features = { ...FEATURES_OFF, ...(await browser.storage.local.get(FEATURES_KEY))[FEATURES_KEY] };
+  const features = Object.fromEntries(await Promise.all(
+    FEATURES.map(async ({ id }) => [id, await featureOn(id)])
+  ));
   const on = FEATURES.filter((f) => features[f.id]).map((f) => f.id);
 
   console.log(LOG, on.length

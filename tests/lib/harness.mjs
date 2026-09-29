@@ -25,6 +25,8 @@ export const PAGE_FILES = () =>
 // so the store lookup is exercised rather than the fallback.
 export function fakeBrowser({
   features = { hours: false, photos: true },
+  cookieConsent = true,
+  incognitoAllowed = true,
   saved = null,
   jar = [cookie('NID', 'ordinary')],
   privateSession = () => [cookie('NID', 'fresh-private', { session: false })],
@@ -34,7 +36,7 @@ export function fakeBrowser({
   const listeners = {};
   const on = (name) => ({ addListener: (fn) => { listeners[name] = fn; } });
 
-  const store = { features, ...(saved ? { goodRoll: saved } : {}) };
+  const store = { features, cookieConsentGoogleSessionSwap: cookieConsent, ...(saved ? { goodRoll: saved } : {}) };
   let normal = [...jar];
   let priv = privateOpen ? privateSession() : [];
   let issued = 0;
@@ -42,7 +44,10 @@ export function fakeBrowser({
   const browser = {
     storage: {
       local: {
-        get: async (key) => (key in store ? { [key]: store[key] } : {}),
+        get: async (key) => {
+          const keys = Array.isArray(key) ? key : [key];
+          return Object.fromEntries(keys.filter((k) => k in store).map((k) => [k, store[k]]));
+        },
         set: async (patch) => { Object.assign(store, patch); },
         remove: async (key) => { delete store[key]; }
       },
@@ -90,7 +95,8 @@ export function fakeBrowser({
       remove: async () => { priv = []; }
     },
 
-    runtime: { onMessage: on('message'), onInstalled: on('installed'), onStartup: on('startup') }
+    runtime: { onMessage: on('message'), onInstalled: on('installed'), onStartup: on('startup'), id: 'gm-test' },
+    extension: { isAllowedIncognitoAccess: async () => incognitoAllowed }
   };
 
   return {
@@ -98,6 +104,7 @@ export function fakeBrowser({
     listeners,
     did,
     storage: store,
+    consent: (value) => { store.cookieConsentGoogleSessionSwap = value; },
     jarNow: () => normal,
     privateNow: () => priv
   };

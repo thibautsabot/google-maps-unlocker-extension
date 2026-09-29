@@ -1,6 +1,6 @@
 <!DOCTYPE html>
 <meta charset="utf-8">
-<title>GM Native Maps</title>
+<title>Unlocker — for Google Maps™</title>
 
 <style>
   :root { color-scheme: light dark; }
@@ -16,6 +16,12 @@
     margin: 0 0 12px;
     font-size: 13px;
     font-weight: 600;
+  }
+
+  .version {
+    grid-column: auto;
+    font-weight: 400;
+    opacity: 0.55;
   }
 
   label {
@@ -55,14 +61,43 @@
 
   button:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
 
-  button[hidden] { display: none; }
+  button[hidden], section[hidden] { display: none; }
+
+  dialog {
+    max-width: 340px;
+    border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
+    border-radius: 10px;
+    color: CanvasText;
+    background: Canvas;
+    font: 13px/1.5 system-ui, sans-serif;
+  }
+
+  dialog::backdrop { background: rgb(0 0 0 / 55%); }
+  dialog h2 { margin: 0 0 8px; font-size: 15px; }
+  dialog p { opacity: 1; }
+  .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .dialog-actions button { width: auto; margin-top: 8px; }
 </style>
 
-<h1>Google Maps, unhidden</h1>
+<h1>Unlocker <small class="version" id="version"></small></h1>
 
 <div id="features"></div>
 
 <p id="note">All off — the extension does nothing at all.</p>
+
+<section id="private-access" hidden>
+  <p>To borrow a session, allow this extension in private windows. The browser requires you to enable that permission in extension settings.</p>
+  <button id="open-private-settings" type="button">Open extension settings</button>
+</section>
+
+<dialog id="cookie-consent" aria-labelledby="consent-title" aria-describedby="consent-copy">
+  <h2 id="consent-title">Allow Google cookie replacement?</h2>
+  <p id="consent-copy">To show more photos and reviews, this feature reads your Google cookies, replaces them with cookies from a private browsing session, and saves a working set locally for reuse. This signs you out of Google in this browser. Cookies are sent only to Google. You can turn the feature off at any time.</p>
+  <div class="dialog-actions">
+    <button id="consent-cancel" type="button">Cancel</button>
+    <button id="consent-accept" type="button">Agree and continue</button>
+  </div>
+</dialog>
 
 <button id="reload" hidden>Reload this Maps tab</button>
 

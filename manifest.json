@@ -1,16 +1,26 @@
 {
   "manifest_version": 3,
-  "name": "GM Native Maps — Photos, Reviews & Hours",
-  "version": "11.5.0",
-  "description": "Shows the full week of opening hours, lifts Google's photo cap by borrowing a private session, and opens Plus d'avis, review sort, and review search without the sign-in prompt. All off until switched on in the toolbar.",
+  "name": "Unlocker — for Google Maps™",
+  "version": "1.0.0",
+  "description": "Full opening hours, review search and filters, and full photo galleries on Google Maps, without the sign-in wall. Each feature has its own switch.",
   "action": {
-    "default_title": "GM Native Maps",
-    "default_popup": "popup/popup.html"
+    "default_title": "Unlocker",
+    "default_popup": "popup/popup.html",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
   },
   "browser_specific_settings": {
     "gecko": {
-      "id": "gm-native-maps@local",
-      "strict_min_version": "128.0"
+      "id": "@gm-native-maps",
+      "strict_min_version": "140.0",
+      "data_collection_permissions": {
+        "required": [
+          "none"
+        ]
+      }
     }
   },
   "permissions": [
@@ -61,5 +71,11 @@
       "run_at": "document_start"
     }
   ],
-  "incognito": "spanning"
+  "incognito": "spanning",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  }
 }

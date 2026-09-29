@@ -1,4 +1,4 @@
-# GM Native Maps
+# Unlocker — for Google Maps™
 
 **Google Maps, with the "sign in to see more" wall knocked down.**
 
@@ -35,8 +35,10 @@ open is already fine.
 - Some places stay limited whoever asks. It stops after five tries instead of
   reloading forever.
 
-> **Heads up:** this one signs you out of Google in that browser while it is
-> on. Want to stay signed in? Leave it off. The other two are safe.
+Before it runs, the toolbar asks you to agree to the cookie change. It reads
+and replaces Google cookies, and saves a working set locally for reuse. This
+signs you out of Google in that browser. Turn the switch off to withdraw
+consent; turning it on again asks again.
 
 ---
 
@@ -45,8 +47,8 @@ open is already fine.
 - **No server, no account, no analytics.** There is nothing to gather here.
 - **It only runs on Google Maps pages.**
 - **Permissions:** `cookies` and `storage`, plus access to `google.com`.
-  Cookies are only touched by *Full photos and reviews*, and only when you
-  switch it on.
+  Cookies are only touched by *Full photos and reviews*, after you agree in
+  the popup.
 - **Nothing runs until you turn it on.** Each feature has its own switch in
   the toolbar. Use one, two or all three.
 
@@ -54,13 +56,13 @@ open is already fine.
 
 ## Install
 
-For **Firefox 128+**.
+For **Firefox 140+**.
 
 1. Download or clone this repository.
 2. Open `about:debugging` in Firefox, then **This Firefox**.
 3. Click **Load Temporary Add-on** and pick `manifest.json`.
 4. Click the toolbar icon, flip the switches you want, and reload Maps.
-5. Allow the extension in private windows (`about:addons`), or it can't borrow.
+5. If private-window access is off, the popup detects it and offers **Open extension settings**. The browser requires you to enable it there yourself.
 
 Firefox forgets temporary add-ons on restart, so load it again next time.
 
@@ -75,4 +77,4 @@ Firefox forgets temporary add-ons on restart, so load it again next time.
 
 ---
 
-*Developers: technical notes and tests are in [`README.txt`](README.txt).*
+*[Privacy policy](PRIVACY.md) · Developers: technical notes and tests are in [`README.txt`](README.txt).*
