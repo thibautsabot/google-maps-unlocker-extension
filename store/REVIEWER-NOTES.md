@@ -11,7 +11,7 @@ turns it on. With all three off it does nothing.
 
 | Switch | What it does | Touches cookies |
 |---|---|---|
-| Full opening hours | Expands the collapsed weekly hours on click | No |
+| Full opening hours | Expands the collapsed weekly hours on click, and asks Google for the place again when its first reply carries only today | No |
 | Review search and filters | Lets the review search, sort and more-reviews controls work without the sign-in prompt | No |
 | Full photos and reviews | Replaces the browser's Google session so Maps serves the full gallery and reviews | **Yes** |
 

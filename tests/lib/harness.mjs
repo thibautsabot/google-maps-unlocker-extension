@@ -210,7 +210,8 @@ export function loadPage({
     XMLHttpRequest: function () {},
     sessionStorage: { getItem: () => null, setItem: () => {} }
   };
-  win.XMLHttpRequest.prototype = { open() {}, send() {}, addEventListener() {} };
+  win.nativeSends = [];
+  win.XMLHttpRequest.prototype = { open() {}, send() { win.nativeSends.push(this); }, addEventListener() {} };
 
   // gallery-ui.js and page-hook.js touch the document, so there has to be
   // enough of one for them to start without throwing. None of these tests
@@ -225,9 +226,10 @@ export function loadPage({
     children: [], textContent: '', innerHTML: ''
   });
 
+  const links = [];
   const doc = {
     readyState: 'complete',
-    querySelectorAll: (sel) => (sel.includes('script') ? [...scripts.values()] : []),
+    querySelectorAll: (sel) => (sel === 'link' ? links : sel.includes('script') ? [...scripts.values()] : []),
     querySelector: () => null,
     createElement: element,
     images: [],
@@ -243,7 +245,11 @@ export function loadPage({
     },
     setTimeout, clearTimeout, URLSearchParams, JSON, Set, Map, Array, Number, String,
     Object, RegExp, Math, Date, Promise,
-    MutationObserver: class { observe() {} disconnect() {} },
+    MutationObserver: class {
+      constructor(fn) { this.fn = fn; (sandbox.observers ||= []).push(this); }
+      observe() {}
+      disconnect() {}
+    },
     requestAnimationFrame: (fn) => setTimeout(fn, 0),
     getComputedStyle: () => ({ getPropertyValue: () => '', display: 'block' }),
     sessionStorage: win.sessionStorage, localStorage, XMLHttpRequest: win.XMLHttpRequest, fetch: win.fetch
@@ -254,7 +260,8 @@ export function loadPage({
   new Function(...keys, PAGE_FILES().map(read).join('\n'))(...keys.map((k) => sandbox[k]));
 
   return {
-    win, doc, scripts, posted, logs,
+    win, doc, scripts, posted, logs, links,
+    observers: () => sandbox.observers || [],
     api: () => win.GMGallery,
     switchOn: () => win.postMessage({
       source: 'gm-native-maps', type: 'gm-settings', features: { photos: true, hours: true }

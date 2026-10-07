@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Unlocker — for Google Maps™",
-  "version": "1.0.0",
+  "version": "1.0.3",
   "description": "Full opening hours, review search and filters, and full photo galleries on Google Maps, without the sign-in wall. Each feature has its own switch.",
   "action": {
     "default_title": "Unlocker",
@@ -35,6 +35,7 @@
       "common/features.js",
       "common/registry.js",
       "common/log.js",
+      "common/reload.js",
       "photos/cookies.js",
       "photos/verdict.js",
       "photos/roll.js",
@@ -52,6 +53,7 @@
         "photos/read.js",
         "photos/watch.js",
         "photos/ui.js",
+        "hours/reply.js",
         "hours/hours.js",
         "reviews/ungate.js"
       ],
@@ -72,6 +74,10 @@
     }
   ],
   "incognito": "spanning",
+  "options_ui": {
+    "page": "options/options.html",
+    "open_in_tab": false
+  },
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",

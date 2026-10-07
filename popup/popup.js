@@ -2,8 +2,7 @@
 //
 //   build the checkbox
 //   on change, save it and describe what that means for the open tab
-//   offer a reload only when the open tab is Maps and will not pick the
-//   change up on its own
+//   offer a reload after any change, when the open tab is Maps
 
 const panel = document.getElementById('features');
 const note = document.getElementById('note');
@@ -37,9 +36,7 @@ for (const feature of FEATURES) {
   name.textContent = feature.label;
 
   const detail = document.createElement('small');
-  detail.textContent = feature.appliesAtOnce
-    ? `${feature.note} Applies straight away.`
-    : `${feature.note} Needs the page to load again.`;
+  detail.textContent = feature.note;
 
   label.append(box, name, detail);
   panel.append(label);
@@ -88,20 +85,42 @@ async function currentTab() {
   return tab;
 }
 
-// Shows the reload button when the change will not apply to the open tab by
-// itself, and that tab is a Maps page. Anywhere else the button would reload
-// a page the extension does not run on.
+const PENDING_KEY = 'reloadPending';
+
+const pendingTabs = async () => (await browser.storage.local.get(PENDING_KEY))[PENDING_KEY] || {};
+
+async function markPending(tab) {
+  if (!tab?.id) return;
+  const all = await pendingTabs();
+  all[tab.id] = tab.url;
+  await browser.storage.local.set({ [PENDING_KEY]: all });
+}
+
+async function clearPending(tabId) {
+  const all = await pendingTabs();
+  if (!(tabId in all)) return;
+  delete all[tabId];
+  await browser.storage.local.set({ [PENDING_KEY]: all });
+}
+
+// Shows the reload button after any switch is changed, when the open tab is
+// a Maps page, and keeps showing it until that tab has been reloaded.
+// Anywhere else the button would reload a page the extension does not run on.
 async function offerReload(changed) {
   const tab = await currentTab();
   const onMaps = /^https:\/\/(www|maps)\.google\.com\/maps/.test(tab?.url || '');
 
-  if (!changed || changed.appliesAtOnce || !onMaps) {
+  if (changed && onMaps) await markPending(tab);
+
+  const waiting = onMaps && tab?.id in await pendingTabs();
+  if (!waiting) {
     reload.hidden = true;
     return;
   }
 
   reload.hidden = false;
   reload.onclick = async () => {
+    await clearPending(tab.id);
     await browser.tabs.reload(tab.id);
     window.close();
   };
@@ -109,7 +128,7 @@ async function offerReload(changed) {
 
 // The status line under the switches. changed is the feature just toggled,
 // or nothing when the panel is merely opening.
-function describe(features, changed) {
+async function describe(features, changed) {
   const on = FEATURES.filter((f) => features[f.id]);
 
   if (!on.length) {
@@ -117,8 +136,10 @@ function describe(features, changed) {
     return;
   }
 
-  note.textContent = changed && !changed.appliesAtOnce
-    ? 'This applies to Maps tabs from their next load.'
+  const waiting = (await pendingTabs());
+  const current = await currentTab();
+  note.textContent = changed || (current?.id in waiting)
+    ? 'Reload the Maps tab to apply.'
     : 'Ready.';
 }
 
@@ -140,16 +161,34 @@ function settingsUrl() {
   return null;
 }
 
+const SETTINGS_HINT = 'Open your browser’s extension settings and enable this extension in private/incognito windows.';
+
+const showHint = (text) => { privateAccess.querySelector('p').textContent = text; };
+
 openPrivateSettings.addEventListener('click', async () => {
   const url = settingsUrl();
   if (!url) {
-    privateAccess.querySelector('p').textContent = 'Open your browser’s extension settings and enable this extension in private/incognito windows.';
+    showHint(SETTINGS_HINT);
     return;
   }
+
+  // Firefox refuses to let an extension open about: pages, so this opens the
+  // extension's own options page instead, which Firefox shows inside
+  // about:addons. The page says which switch to flip.
+  if (url.startsWith('about:')) {
+    try {
+      await browser.runtime.openOptionsPage();
+      window.close();
+    } catch (_) {
+      showHint(`Open a new tab, go to ${url}, choose this extension, Manage, and set "Run in Private Windows" to Allow.`);
+    }
+    return;
+  }
+
   try {
     await browser.tabs.create({ url });
   } catch (_) {
-    privateAccess.querySelector('p').textContent = 'Open your browser’s extension settings and enable this extension in private/incognito windows.';
+    showHint(`${SETTINGS_HINT} Address: ${url}`);
   }
 });
 
@@ -165,7 +204,7 @@ async function show(changed) {
   const allowed = await privateAccessAllowed();
   privateAccess.hidden = !(features.photos && consented && !allowed);
 
-  describe(features, changed);
+  await describe(features, changed);
   await offerReload(changed);
 }
 

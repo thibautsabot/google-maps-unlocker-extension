@@ -171,6 +171,7 @@ const scheduleDecision = (tabId, ms, worked, why) => {
 function onHello(msg, tabId) {
   if (tabId == null) return;
   rememberUrl(tabId, msg.url);
+  forgetReloadPending(tabId);
 
   pageCount.delete(tabId);
   gaveExtraTime.delete(tabId);

@@ -174,6 +174,19 @@
     if (reviewsOn) hideNotice();
   }
 
+  // Whether a node paints a photo anywhere inside it, by background image
+  // or by img. Maps draws its grid tiles as background images.
+  const PHOTO_HOSTS = /googleusercontent\.com|ggpht\.com|streetviewpixels/i;
+
+  function holdsPhotos(node) {
+    for (const child of node.querySelectorAll('[style*="background-image"], img')) {
+      const style = child.getAttribute('style') || '';
+      const src = child.getAttribute('src') || '';
+      if (PHOTO_HOSTS.test(style) || PHOTO_HOSTS.test(src)) return true;
+    }
+    return false;
+  }
+
   // The sentence sits in its own span. Hiding that span leaves the box,
   // and the box is the popup: the same sentence plus its button. The box is
   // the smallest node that has both, and it stays small. The review list
@@ -193,6 +206,12 @@
       if (!text.includes(needle) || text.length >= bestLen) continue;
       if (text.length > needle.length + 200) continue;
       if (!node.querySelector('button, [role="button"]')) continue;
+
+      // The gallery drawer can hold the notice beside its photo grid. Hiding
+      // that wrapper hides the photos with it, which shows as images for an
+      // instant and then a white block. A box with photos in it is never the
+      // notice box.
+      if (holdsPhotos(node)) continue;
 
       best = node;
       bestLen = text.length;

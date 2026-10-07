@@ -6,6 +6,7 @@ importScripts(
   'common/features.js',
   'common/registry.js',
   'common/log.js',
+  'common/reload.js',
   'photos/cookies.js',
   'photos/verdict.js',
   'photos/roll.js',

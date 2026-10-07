@@ -2,23 +2,19 @@ const FEATURES = [
   {
     id: 'hours',
     label: 'Full opening hours',
-    // appliesAtOnce says whether a tab already open will obey a change without reloading
-    note: 'Expands the whole week without the sign-in prompt.',
-    appliesAtOnce: true
+    note: 'Shows the whole week without the sign-in prompt, even when Google first sends only today.'
   },
   {
     id: 'reviews',
     label: 'Review search and filters',
-    note: 'Opens the review list, sort, and search without the sign-in prompt.',
-    appliesAtOnce: true
+    note: 'Opens the review list, sort, and search without the sign-in prompt.'
   },
   {
     id: 'photos',
     label: 'Full photos and reviews',
     note: "Lifts Google's photo cap and one-page review limit by borrowing "
       + 'a private session. Signs you out of Google in this browser, swaps '
-      + 'your Google cookies and reloads the tab.',
-    appliesAtOnce: false
+      + 'your Google cookies and reloads the tab.'
   }
 ];
 

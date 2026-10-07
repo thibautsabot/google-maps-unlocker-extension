@@ -15,7 +15,7 @@ const manifest = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'));
 const { version } = manifest;
 
 // Everything a running extension needs, and nothing else.
-const SHIP = ['common', 'hours', 'photos', 'popup', 'reviews', 'icons', 'service-worker.js', 'LICENSE', 'PRIVACY.md'];
+const SHIP = ['common', 'hours', 'options', 'photos', 'popup', 'reviews', 'icons', 'service-worker.js', 'LICENSE', 'PRIVACY.md'];
 
 const DIST = join(ROOT, 'dist');
 rmSync(DIST, { recursive: true, force: true });
