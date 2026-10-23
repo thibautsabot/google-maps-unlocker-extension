@@ -249,7 +249,7 @@ async function onBorrowPrivate(msg, tabId) {
     return false;
   }
 
-  const url = msg.galleryUrl || lastUrl.get(tabId) || 'https://www.google.com/maps';
+  const url = msg.galleryUrl || lastUrl.get(tabId) || `https://${new URL(msg.url || 'https://www.google.com').hostname}/maps`;
   let opened = null;
 
   const finish = async (message) => {

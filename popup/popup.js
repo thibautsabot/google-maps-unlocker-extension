@@ -108,7 +108,7 @@ async function clearPending(tabId) {
 // Anywhere else the button would reload a page the extension does not run on.
 async function offerReload(changed) {
   const tab = await currentTab();
-  const onMaps = /^https:\/\/(www|maps)\.google\.com\/maps/.test(tab?.url || '');
+  const onMaps = isGoogleMapsUrl(tab?.url || '');
 
   if (changed && onMaps) await markPending(tab);
 

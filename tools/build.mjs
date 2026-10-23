@@ -3,12 +3,13 @@
 //   dist/gm-native-maps-firefox-<version>.zip   Firefox Add-ons (AMO)
 //   dist/gm-native-maps-chromium-<version>.zip  Chrome Web Store, Edge Add-ons
 //
-// The two differ only in the manifest. Firefox runs background.scripts and
+// Both packages enumerate Google's official supported domains. Firefox runs background.scripts and
 // wants the gecko block. Chrome runs service_worker and rejects both.
 
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { hostPermissions, mapsMatches } from './google-domains.mjs';
 
 const ROOT = new URL('..', import.meta.url).pathname;
 const manifest = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'));
@@ -28,6 +29,8 @@ function pack(name, edit) {
 
   const copy = structuredClone(manifest);
   edit(copy);
+  copy.host_permissions = hostPermissions;
+  for (const script of copy.content_scripts) script.matches = mapsMatches;
   writeFileSync(join(dir, 'manifest.json'), JSON.stringify(copy, null, 2) + '\n');
 
   const zip = join(DIST, `${name}-${version}.zip`);

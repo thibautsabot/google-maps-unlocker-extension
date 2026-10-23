@@ -47,7 +47,7 @@ consent; turning it on again asks again.
 
 - **No server, no account, no analytics.** There is nothing to gather here.
 - **It only runs on Google Maps pages.**
-- **Permissions:** `cookies` and `storage`, plus access to `google.com`.
+- **Permissions:** `cookies` and `storage`, plus host access to the 187 Google domains in the supported-domains list captured by this release. The build enumerates them because browser match patterns cannot wildcard TLDs; refreshing the list requires a new build and release.
   Cookies are only touched by *Full photos and reviews*, after you agree in
   the popup.
 - **Nothing runs until you turn it on.** Each feature has its own switch in
@@ -57,7 +57,7 @@ consent; turning it on again asks again.
 
 ## Install
 
-Works in **Firefox 140+** and in Chromium browsers (Chrome, Edge, Brave, Vivaldi, Opera).
+Works in **Firefox 142+** and **Chromium 111+** browsers (Chrome, Edge, Brave, Vivaldi, Opera).
 
 Build the packages once, from a checkout of this repository:
 
@@ -65,19 +65,19 @@ Build the packages once, from a checkout of this repository:
 node tools/build.mjs
 ```
 
-That writes `dist/gm-native-maps-firefox-1.0.3.zip` and `dist/gm-native-maps-chromium-1.0.3.zip`. Node is the only requirement.
+That writes `dist/gm-native-maps-firefox-<version>.zip` and `dist/gm-native-maps-chromium-<version>.zip`. Node is the only requirement.
 
 ### Firefox
 
 1. Open `about:debugging` and choose **This Firefox**.
-2. Click **Load Temporary Add-on** and pick the Firefox zip (or `manifest.json` from a checkout).
+2. Click **Load Temporary Add-on** and pick `dist/gm-native-maps-firefox-<version>.zip` (or `manifest.json` from a checkout).
 3. Click the toolbar icon, flip the switches you want, and reload Maps.
 
 Firefox forgets temporary add-ons on restart, so load it again next time.
 
 ### Chrome, Edge, Brave, Vivaldi, Opera
 
-1. Unzip `dist/gm-native-maps-chromium-1.0.3.zip` into a folder you will keep.
+1. Unzip `dist/gm-native-maps-chromium-<version>.zip` into a folder you will keep.
 2. Open `chrome://extensions` (`edge://extensions` in Edge), switch on **Developer mode**, and click **Load unpacked**.
 3. Pick the unzipped folder.
 4. Click the toolbar icon, flip the switches you want, and reload Maps.
@@ -100,8 +100,10 @@ The browser requires you to enable this yourself.
 - It shows what Google already sends anonymous visitors, nothing more.
 - Google redesigns Maps now and then. A big change can break a feature
   until the extension is updated.
-- Not affiliated with or endorsed by Google (obviously).
+- Not affiliated with or endorsed by Google.
+- Google Maps is a trademark of Google LLC. Use of this trademark is subject to Google Permissions.
 
 ---
 
-*[Privacy policy](PRIVACY.md) · Developers: technical notes and tests are in [`README.txt`](README.txt).*
+* [Privacy policy](PRIVACY.md) · Technical notes and tests: `node tests/run.mjs`.
+* Locale coverage uses [Google's supported domains](https://www.google.com/supported_domains). Match patterns enumerate them explicitly because browser extensions cannot wildcard top-level domains.

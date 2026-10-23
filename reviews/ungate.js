@@ -18,6 +18,7 @@
   let seeMore = '';
   let reviewsTab = '';
   let checkFound = '';
+  let detectorFound = '';
 
   const LOG = '[GM-REVIEWS]';
   const MARK = 'data-gm-reviews-hidden';
@@ -31,10 +32,89 @@
   const beside259 = (name) =>
     new RegExp(String.raw`_\.${escapeReg(name)}\(_\.[A-Za-z0-9$]+\(\)\)[^;]{0,200},259\)`, 'g');
 
+  // Preserve the regex detector above as the primary path. This tokenizer is
+  // a fallback for Maps builds that inline the gate call and rename the field
+  // reader. It ignores comments and literals, then matches a narrow control
+  // flow shape: a condition containing field 259 and a gate call, with
+  // different review-action handlers in the true/false branches.
+  const INLINE_ACTIONS = new Map();
+  const lex = (source) => [...source.matchAll(
+    /\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|===|!==|=>|&&|\|\||==|!=|<=|>=|\?\.|[^\s]/g
+  )].map((m) => m[0]).filter((t) => !t.startsWith('//') && !t.startsWith('/*')
+    && !t.startsWith('"') && !t.startsWith("'") && !t.startsWith('`'));
+
+  function matching(tokens, start, open = '(', close = ')') {
+    if (tokens[start] !== open) return -1;
+    let depth = 0;
+    for (let i = start; i < tokens.length; i++) {
+      if (tokens[i] === open) depth++;
+      else if (tokens[i] === close && --depth === 0) return i;
+    }
+    return -1;
+  }
+
+  function hasReviewAction(tokens) {
+    for (let i = 0; i + 4 < tokens.length; i++) {
+      if (tokens[i] === 'actions' && tokens[i + 1] === '.'
+        && /^[A-Za-z_$][\w$]*$/.test(tokens[i + 2])
+        && tokens[i + 3] === '.' && tokens[i + 4] === 'run') return tokens[i + 2];
+    }
+    return '';
+  }
+
+  function splitAnd(tokens) {
+    const parts = [];
+    let start = 0, depth = 0;
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] === '(' || tokens[i] === '[' || tokens[i] === '{') depth++;
+      else if (tokens[i] === ')' || tokens[i] === ']' || tokens[i] === '}') depth--;
+      else if (tokens[i] === '&&' && depth === 0) {
+        parts.push(tokens.slice(start, i));
+        start = i + 1;
+      }
+    }
+    parts.push(tokens.slice(start));
+    return parts;
+  }
+
+  function inlineGate(source) {
+    const tokens = lex(source);
+    for (let i = 0; i + 1 < tokens.length; i++) {
+      if (tokens[i] !== 'if' || tokens[i + 1] !== '(') continue;
+      const condEnd = matching(tokens, i + 1);
+      if (condEnd < 0) continue;
+
+      const clauses = splitAnd(tokens.slice(i + 2, condEnd));
+      const fieldClause = clauses.findIndex((c) => c.includes('259'));
+      if (fieldClause < 1 || !clauses.slice(fieldClause + 1).some((c) => c.includes('actions'))) continue;
+
+      const call = clauses.slice(0, fieldClause).map((clause) => {
+        for (let j = 0; j + 2 < clause.length; j++) {
+          if (clause[j] === '.' && /^[A-Za-z_$][\w$]*$/.test(clause[j + 1])
+            && clause[j + 2] === '(') return clause[j + 1];
+        }
+        return '';
+      }).find(Boolean);
+      if (!call) continue;
+
+      let bodyStart = condEnd + 1;
+      if (tokens[bodyStart] !== '{') continue;
+      const bodyEnd = matching(tokens, bodyStart, '{', '}');
+      if (bodyEnd < 0 || tokens[bodyEnd + 1] !== 'else') continue;
+      const signIn = hasReviewAction(tokens.slice(bodyStart, bodyEnd + 1));
+      const tail = tokens.slice(bodyEnd + 2, bodyEnd + 100);
+      const open = hasReviewAction(tail);
+      if (!signIn || !open || signIn === open || !tail.includes('flow')) continue;
+
+      return { check: call, actions: { signIn, open } };
+    }
+    return null;
+  }
+
   const norm = (text) => (text || '').replace(/\s+/g, ' ').trim();
 
   // text + nbsp + "(" then a count, as a concatenation or a template.
-  const SEE_MORE = /"((?:\\.|[^"\\])*)\\u00a0\("\+|`((?:\\.|[^`\\$])*)\\u00a0\(\$\{/;
+  const SEE_MORE = /"((?:\\.|[^"\\])*)\\u00a0\("\+|`((?:\\.|[^`\\$])*)\\u00a0\(\$\{|`((?:\\.|[^`\\$])*)\u00a0\(\$\{/;
 
   function checkName(source) {
     const names = new Map();
@@ -54,7 +134,14 @@
         most = count;
       }
     }
-    return found;
+    if (found) {
+      detectorFound = 'field4-regex';
+      return found;
+    }
+
+    const inline = inlineGate(source);
+    if (inline) detectorFound = 'structural-fallback';
+    return inline?.check || '';
   }
 
   // The notice is the long .text("...") just before the check picks the
@@ -160,12 +247,12 @@
     // template literal, and the build alternates between the two.
     const label = SEE_MORE.exec(source);
     if (label) {
-      const text = label[1] ?? label[2];
+      const text = label[1] ?? label[2] ?? label[3];
       try { seeMore = JSON.parse('"' + text.replace(/\\`/g, '`').replace(/"/g, '\\"') + '"'); } catch (_) {}
     }
     wrapSoon(name);
 
-    const actions = listActions(source, name);
+    const actions = listActions(source, name) || inlineGate(source)?.actions;
     if (actions) {
       const tab = tabLabel(source, actions.open);
       if (tab) reviewsTab = tab;
@@ -321,7 +408,7 @@
   window.__GM_REVIEWS__ = {
     // What discovery found in the Maps script. Read by the tests, and handy
     // in the console when a Maps update leaves a feature doing nothing.
-    learned: () => ({ check: checkFound, notice, seeMore, reviewsTab }),
+    learned: () => ({ check: checkFound, detector: detectorFound, notice, seeMore, reviewsTab }),
     limited: () => !!document.querySelector(`[${MARK}]`) || seeMoreShown(),
     clear: () => chartShown() && !seeMoreShown() && !document.querySelector(`[${MARK}]`)
   };

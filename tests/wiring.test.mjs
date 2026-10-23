@@ -107,17 +107,26 @@ for (const [label, files] of [['background', BACKGROUND_FILES()], ['page', PAGE_
   if (dom.length) console.log('        uses:', [...new Set(dom)].join(', '));
 }
 
-// --- the popup's idea of a Maps page matches the manifest's -----------------
+// --- localized Google Maps hosts -----------------------------------------------
 {
-  const popup = read('popup/popup.js');
-  const pattern = popup.match(/(\/\^https:.*?\/)\.test\(/);
+  const helper = read('common/maps-url.js');
+  const checker = new Function(`${helper}; return isGoogleMapsUrl;`)();
   const matches = m.content_scripts[0].matches;
+  const hosts = matches.map((pat) => pat.match(/^https:\/\/\*\.([^/]+)\/maps\/\*$/)?.[1]);
 
-  const test = pattern ? new RegExp(pattern[1].slice(1, -1)) : null;
-  const agrees = test && matches.every((pat) =>
-    test.test(pat.replace('*://', 'https://').replace('/*', '/place/X')));
-
-  t.check('the popup offers to reload the same pages the extension runs on', !!agrees);
+  t.check('popup Maps URL helper accepts localized Maps hosts',
+    checker('https://www.google.fr/maps/place/X')
+      && checker('https://maps.google.co.uk/maps/place/X')
+      && checker('https://www.google.co.jp/maps'));
+  t.check('popup Maps URL helper rejects non-Maps and lookalike hosts',
+    !checker('https://www.google.fr/search?q=maps')
+      && !checker('https://google.fr.evil.example/maps')
+      && !checker('https://maps.google.com.evil.example/maps'));
+  t.check('localized hosts include google.fr, google.de and multi-label google.co.uk',
+    hosts.includes('google.fr') && hosts.includes('google.de') && hosts.includes('google.co.uk'));
+  t.check('every Maps match has a corresponding Google host permission',
+    hosts.length === new Set(hosts).size
+      && hosts.every((host) => m.host_permissions.includes(`*://*.${host}/*`)));
 }
 
 // --- a feature is only real if the catalogue, the folders and the manifest
@@ -154,11 +163,13 @@ for (const [label, files] of [['background', BACKGROUND_FILES()], ['page', PAGE_
     !/'(photos|hours)'/.test(read('common/dispatch.js')));
 }
 
-// --- versions agree ---------------------------------------------------------
+// --- package names use version placeholders --------------------------------
 {
-  const readme = read('README.txt');
-  const stated = readme.split('\n')[0].trim().split(/\s+/).pop();
-  t.check(`the README states the manifest's version (${m.version})`, stated === m.version);
+  const readme = read('README.md');
+  t.check('the install guide names the Firefox package',
+    readme.includes('dist/gm-native-maps-firefox-<version>.zip'));
+  t.check('the install guide names the Chromium package',
+    readme.includes('dist/gm-native-maps-chromium-<version>.zip'));
 }
 
 process.exit(t.done());

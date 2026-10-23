@@ -1,7 +1,7 @@
 # Unlocker — for Google Maps™: reviewer notes
 
-Use these in the "notes to reviewer" field of Firefox Add-ons, the Chrome Web
-Store and Edge Add-ons. Nothing in the extension is minified or obfuscated.
+Use these in the notes-to-reviewer field for each store. Source files are not
+minified or obfuscated.
 
 ## What it is
 
@@ -42,8 +42,9 @@ is collected by the popup, not by the listing.
 ## Other permissions
 
 - `storage`: remembers which switches are on and the saved session.
-- Host access to `*.google.com`: the cookie swap needs it, and the content
-  scripts run only on `google.com/maps/*` and `maps.google.com/maps/*`.
+- Host access is limited to the 187 hostnames in Google's supported-domains
+  list at build time. Cookie swapping needs that access; page scripts run only
+  on `/maps/*` paths for those hosts.
 - `incognito: "spanning"`: the swap needs access to a private/incognito
   window. The browser keeps this permission under user control; this extension
   checks it and points the user to settings, but cannot enable it itself.
@@ -69,7 +70,9 @@ submitting.
 
 1. Load the extension. Open the toolbar panel. Everything is off.
 2. Open a place on `google.com/maps` while signed out.
-3. Turn on "Full opening hours". Click the hours: the whole week opens.
+3. Turn on "Full opening hours" and reload the Maps tab when offered. Click the
+   hours: the whole week opens. If the first place reply has only today, the
+   extension asks for the place again; console lines use `[GM-HOURS]`.
 4. Turn on "Review search and filters". Open the Reviews tab: search, sort and
    the more-reviews button work with no sign-in prompt.
 5. "Full photos and reviews" reloads the tab and replaces Google cookies. Test

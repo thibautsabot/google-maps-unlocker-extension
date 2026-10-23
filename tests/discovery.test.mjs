@@ -46,9 +46,13 @@ async function learnFrom(fixture) {
 // The same words in the two builds, under different names.
 const old = await learnFrom('maps-2026-09-25.js');
 const now = await learnFrom('maps-2026-09-29.js');
+const latest = await learnFrom('maps-2026-10-23.js');
 
-t.check('Sep 25 build: finds the sign-in check', old.check === 'xyd');
-t.check('Sep 29 build: finds it under its new name', now.check === 'tW');
+t.check('Sep 25 build: finds the sign-in check', old.check === 'xyd' && old.detector === 'field4-regex');
+t.check('Sep 29 build: finds it under its new name', now.check === 'tW' && now.detector === 'field4-regex');
+t.check('Oct 23 build: finds the inlined field-259 gate', latest.check === 'JK' && latest.detector === 'structural-fallback');
+t.check('Oct 23 build: reads the Reviews tab label', latest.reviewsTab === 'Reviews');
+t.check('Oct 23 build: reads the templated see-more label', latest.seeMore === 'See more reviews');
 
 for (const [label, got] of [['Sep 25', old], ['Sep 29', now]]) {
   t.check(`${label}: reads the see-more label`, got.seeMore === "Voir plus d'avis");

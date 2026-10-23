@@ -12,11 +12,11 @@ Paste `store/REVIEWER-NOTES.md` into each store's reviewer-notes field.
 
 ## Before any store
 
-- [ ] Put this line in every store description: `Google Maps is a trademark of Google LLC. Use of this trademark is subject to Google Permissions. This extension is not affiliated with or endorsed by Google.` Chrome's branding rules require the attribution when the name mentions Google Maps.
-- [ ] Read `PRIVACY.md` and `store/REVIEWER-NOTES.md` against current store forms. This extension handles authentication cookies locally. The popup asks for explicit consent before enabling the feature; store disclosures do not replace that consent.
+- [ ] Put this line in every store description: `Google Maps is a trademark of Google LLC. Use of this trademark is subject to Google Permissions. This extension is not affiliated with or endorsed by Google.` Chrome's branding rules require the attribution when the name mentions Google Maps. The README includes the same attribution.
+- [ ] Read `PRIVACY.md` and `store/REVIEWER-NOTES.md` against current store forms. The photo feature handles authentication cookies locally after explicit popup consent; store disclosures do not replace that consent. Opening-hours reply retries make normal requests to Google and do not touch cookies.
 
 - [x] Use provided logo at `icons/icon-128.png`, with generated 16, 32 and 48 px toolbar variants.
-- [ ] Take 1-5 screenshots at 1280x800: opening hours open, review search working, the toolbar panel.
+- [ ] Take 1-5 screenshots at 1280x800: opening hours open, review search working, the toolbar panel. Capture actual browser UI; no mockups.
 - [ ] Publish `PRIVACY.md` at a public URL (the GitHub file URL works) and paste it in the store forms.
 - [ ] Set the support URL to the GitHub issues page.
 
@@ -25,7 +25,7 @@ Paste `store/REVIEWER-NOTES.md` into each store's reviewer-notes field.
 1. Create an account at addons.mozilla.org/developers.
 2. Submit a new add-on, choose **On this site** (listed) and upload the Firefox zip.
 3. Extension ID in the manifest is `@gm-native-maps`. It cannot be changed after the first release.
-4. Data collection is already declared as `none` in the manifest.
+4. Data collection is declared as `none` in the manifest. Minimum Firefox version is 142 because Firefox for Android added support for `data_collection_permissions` in that release.
 5. Category: Travel. Add the reviewer notes. Expect a review of a few days, and source review since it reads cookies.
 
 ## Chrome Web Store, $5 once
@@ -60,7 +60,7 @@ Ship it from GitHub instead:
 
 ## Every release
 
-1. Bump the version in `manifest.json` and the first line of `README.txt`.
+1. Bump the version in `manifest.json`. README install instructions use `<version>` placeholders and need no version edit.
 2. `node tests/run.mjs`
 3. `node tools/build.mjs`
 4. Upload the new zips.

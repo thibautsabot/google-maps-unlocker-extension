@@ -1,6 +1,6 @@
 # Privacy policy: GM Native Maps
 
-Last updated: 29 September 2026
+Last updated: 7 October 2026
 
 GM Native Maps has no server, account, analytics or tracking. It does not
 collect or transmit data to the extension developer or any third-party service.
@@ -11,10 +11,12 @@ cookies, to Google.
 
 ## What the extension reads and changes
 
-- **Google Maps pages.** It runs only on `google.com/maps` and
-  `maps.google.com/maps`. It reads the page and Google's own replies to your
-  browser in order to show content Google has already sent, and it changes
-  the page in your browser to do so. Nothing it reads is sent anywhere.
+- **Google Maps pages.** It runs on `/maps/*` pages on the 187 Google domains
+  in the supported-domains list captured by this release. It reads the page and Google's own replies to show content Google
+  has already sent, and changes the page in your browser to do so. If Google
+  sends only today's hours, the extension repeats that place request to Google
+  and gives Maps the fuller reply. Nothing it reads is sent to the extension
+  developer.
 - **Your settings.** Which switches are on is kept in your browser's local
   extension storage. It never leaves your device.
 - **Google authentication cookies, only after explicit consent.** When you
