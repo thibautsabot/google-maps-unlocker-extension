@@ -473,6 +473,9 @@
     return copy;
   }
 
+  // The slots the first fill emptied, so later pages get the same treatment.
+  const clearedFlags = [];
+
   // Requests being filled, so a page fetched here is never filled again.
   const fillBusy = new Set();
 
@@ -548,7 +551,17 @@
       const asking = envelopes(body).find((entry) => entry.rpc === rpc);
       const sentToken = asking ? at(asking.args, layoutFor(rpc).token) : null;
       if (typeof sentToken === 'string' && sentToken) {
-        return decline('this is a follow-up page Maps asked for itself');
+        // The server sets the limited flag on every page it serves, so a page
+        // left as it came would stop Maps after one more. The same slots the
+        // first fill emptied are emptied here, and nothing is fetched. Only
+        // those: the last page has an end marker that must stay.
+        const stuck = clearedFlags.filter((index) => first[index] === true);
+        if (!stuck.length) return decline('this is a follow-up page Maps asked for itself');
+
+        const patched = first.slice();
+        for (const index of stuck) patched[index] = null;
+        console.log(LOG, `fill: follow-up page, cleared the limited flag at [${stuck.join(', ')}]`);
+        return frameReply(rpc, patched, text);
       }
       const firstToken = tokenOf(rpc, first);
       if (!firstToken) return decline('it carries no continuation token');
@@ -587,6 +600,7 @@
       // the list. It is emptied whenever a capped reply is filled.
       const cleared = capFlags(first, [...normalFlags]);
       for (const index of cleared) merged.payload[index] = null;
+      for (const index of cleared) if (!clearedFlags.includes(index)) clearedFlags.push(index);
       if (cleared.length) console.log(LOG, `fill: cleared the limited flag at [${cleared.join(', ')}]`);
 
       // Said whether or not the photos switch is on: this runs only when

@@ -631,6 +631,35 @@ const photosIn = async (response) => {
   t.check('follow-up: a first request is still filled', await photosIn(filled) === 20);
 }
 
+// --- every page served after the fill keeps the limited flag cleared -----------
+// The server sets the flag on each page it sends. Left on a follow-up page,
+// Maps stops after one more, which is how a place with 112 photos ended at 30.
+{
+  const cappedPage = (token, first) => {
+    const payload = JSON.parse(JSON.stringify(REPLY_CAPPED));
+    payload[0] = galleryPayload(10, first);
+    payload[5] = longToken(token);
+    return frame('hspqX', payload);
+  };
+  const galleryPayload = (n, first) => JSON.parse(JSON.stringify(
+    [...Array(n)].map((_, i) => REPLY_CAPPED[0][i % REPLY_CAPPED[0].length].map((v, j) => (j === 0 ? `ID${first + i}` : v)))));
+  const flagged = (response) => response.text().then((text) => {
+    const found = [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)]
+      .map((m) => JSON.parse(JSON.parse(`"${m[1]}"`)))[0];
+    return found?.[15];
+  });
+
+  const page = loadPage();
+  page.switchOn();
+  await page.receiveByRequest([cappedPage('T1', 0), cappedPage('T2', 10)], askingFor(20));
+  page.win.fetchCalls.length = 0;
+
+  const followUp = await page.receiveByRequest([cappedPage('T3', 20)], REQUEST_2);
+  t.check('flag: a follow-up page has the flag cleared too', !(await flagged(followUp)));
+  t.check('flag: and nothing extra is fetched for it', page.win.fetchCalls.length === 1);
+  t.check('flag: the log says so', page.logs.some((l) => l.includes('follow-up page, cleared the limited flag')));
+}
+
 // --- what the background is told, and the private-window fallback ---------------
 // A filled list that reaches the page size is reported as served in full, so
 // no private window opens. A capped reply that could not be filled is reported
