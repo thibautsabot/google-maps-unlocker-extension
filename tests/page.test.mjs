@@ -729,19 +729,42 @@ const photosIn = async (response) => {
   const deliver = (page, ...replies) => page.receiveRpc('hspqX', replies);
   const quiet = async (page) => { page.scroll(true); await wait(3700); return page.sent('gm-fill-stalled').length; };
 
-  const ended = await filledPage();
-  await deliver(ended, galleryReply(10, 116, 'T3', 20));
-  await deliver(ended, galleryReply(8, 116, null, 30));
-  t.check('stall: reaching the server\'s last page is not a stall', await quiet(ended) === 0);
+  // The server's last page, but the list is far short of what it announced:
+  // the session is cut, so the fallback runs without waiting for a scroll.
+  const cut = await filledPage();
+  await deliver(cut, galleryReply(10, 116, 'T3', 20));
+  await deliver(cut, galleryReply(8, 116, null, 30));
+  await wait(50);
+  t.check('stall: the list ending far short of the total falls back at once',
+    cut.sent('gm-fill-stalled').length === 1);
+  t.check('stall: and says how far it got', cut.logs.some((l) => l.includes('ended at 38 of 116')));
 
-  const shorter = await filledPage();
-  await deliver(shorter, galleryReply(10, 116, 'T3', 20));
-  await deliver(shorter, galleryReply(6, 116, 'T4', 30));
-  t.check('stall: a page shorter than the ones before it ends the watch', await quiet(shorter) === 0);
+  // The same ending on a list that did reach its total is simply finished.
+  const whole = loadPage();
+  whole.switchOn();
+  await whole.receiveByRequest([galleryReply(10, 30, 'T1', 0), galleryReply(10, 30, 'T2', 10)], askingFor(20));
+  await deliver(whole, galleryReply(10, 30, null, 20));
+  await wait(50);
+  t.check('stall: a list that reached its total is not cut', whole.sent('gm-fill-stalled').length === 0);
 
-  const empty = await filledPage();
-  await deliver(empty, galleryReply(0, 116, null, 30));
-  t.check('stall: an empty page ends the watch', await quiet(empty) === 0);
+  const finishedPage = async () => {
+    const page = loadPage();
+    page.switchOn();
+    await page.receiveByRequest([galleryReply(10, 36, 'T1', 0), galleryReply(10, 36, 'T2', 10)], askingFor(20));
+    return page;
+  };
+
+  const shorter = await finishedPage();
+  await deliver(shorter, galleryReply(10, 36, 'T3', 20));
+  await deliver(shorter, galleryReply(6, 36, 'T4', 30));
+  t.check('stall: a shorter last page ends the watch quietly when the total is reached',
+    await quiet(shorter) === 0);
+
+  const empty = await finishedPage();
+  await deliver(empty, galleryReply(10, 36, 'T3', 20));
+  await deliver(empty, galleryReply(6, 36, 'T4', 30));
+  await deliver(empty, galleryReply(0, 36, null, 36));
+  t.check('stall: an empty page after the whole list ends the watch quietly', await quiet(empty) === 0);
 
   const going = await filledPage();
   await deliver(going, galleryReply(10, 116, 'T3', 20));

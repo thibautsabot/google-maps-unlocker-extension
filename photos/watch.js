@@ -304,14 +304,23 @@
   // to a private-window session. A gallery request leaving, or a reply to one,
   // proves Maps does page and ends the watch for good.
   const STALL_MS = 3500;
+  // A finished list holding less than this share of the announced total is cut.
+  const SHORT_OF_TOTAL = 0.9;
   const AT_END_PX = 80;
   const stall = {
     rpc: null, report: null, timer: null, watching: false, done: false,
 
-    arm(rpc, report) {
+    // loaded and total let the end of the list be judged: the server's last
+    // page arriving with far fewer photos than it announced means the session
+    // is cut, and the fill alone cannot lift that.
+    loaded: 0, total: null,
+
+    arm(rpc, report, loaded = 0, total = null) {
       if (this.done) return;
       this.rpc = rpc;
       this.report = report;
+      this.loaded = loaded;
+      this.total = total;
       if (this.watching) return;
       this.watching = true;
       try { document.addEventListener('scroll', (event) => this.scrolled(event.target), true); } catch (_) {}
@@ -328,7 +337,15 @@
       const size = found ? found.size : 0;
       const ended = size === 0 || !tokenOf(rpc, payload) || (this.biggest > 0 && size < this.biggest);
       this.biggest = Math.max(this.biggest, size);
-      if (ended) this.proven();
+      this.loaded += size;
+      if (!ended) return;
+
+      const short = typeof this.total === 'number' && this.loaded < this.total * SHORT_OF_TOTAL;
+      this.proven();
+      if (!short) return;
+
+      console.warn(LOG, `fill: the list ended at ${this.loaded} of ${this.total}, so this session is cut`);
+      this.report?.();
     },
 
     // Maps asked for another page, or got one: the fill worked.
@@ -679,9 +696,18 @@
               console.log(LOG, `fill: handing Maps a longer list (${filled.length} chars)`);
               report(filled);
               const filledRpc = state.rpc;
+              let filledCount = 0;
+              let filledTotal = null;
+              eachGalleryCall(filled, (name, payload) => {
+                const d = single(payload) ? null : describe(payload);
+                if (!d) return false;
+                filledCount = d.size;
+                filledTotal = d.total;
+                return true;
+              });
               stall.arm(filledRpc, () => tell({ type: 'gm-fill-stalled',
                 firstPage: state.firstPage, serverTotal: state.serverTotal, asked: state.asked,
-                galleryUrl: rememberedGalleryUrl() || location.href }));
+                galleryUrl: rememberedGalleryUrl() || location.href }), filledCount, filledTotal);
               return replaceResponse(res, filled);
             }
           } finally {
