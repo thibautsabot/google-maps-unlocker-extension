@@ -160,8 +160,8 @@ export function loadBackground(world, { quiet = true } = {}) {
 // Replies and requests in the shape captured from Maps (tests/lib/real.mjs),
 // with only the counts varied. They were once invented to match the code,
 // which is how a wrong slot and a broken viewer check both passed.
-export const galleryReply = (photos, total) => frame('hspqX',
-  page(Array.from({ length: photos }, (_, i) => photo(`PHOTO${i}`)), total, 'session', 'token', false));
+export const galleryReply = (photos, total, token = 'token', first = 0) => frame('hspqX',
+  page(Array.from({ length: photos }, (_, i) => photo(`PHOTO${first + i}`)), total, 'session', token, false));
 
 const asking = (...calls) => new URLSearchParams({
   'f.req': JSON.stringify([calls.map(([rpc, a]) => [rpc, JSON.stringify(a), null, 'generic'])])
@@ -190,6 +190,51 @@ export const storage = () => {
   };
 };
 
+class FakeResponse {
+  constructor(body, init = {}) {
+    this._body = body;
+    this.status = init.status ?? 200;
+    this.statusText = init.statusText ?? '';
+    this.headers = init.headers ?? {};
+    // A fetched response has these; a constructed one does not.
+    this.url = init.url ?? '';
+    this.type = init.type ?? 'default';
+    this.redirected = init.redirected ?? false;
+  }
+  async text() { return this._body; }
+  clone() { return new FakeResponse(this._body, this); }
+}
+
+// A reply framed the way the server frames it, measured on real replies: each
+// chunk is "<n>\n<json>\n" where n is the json's UTF-8 length plus two, and
+// the last chunk has no newline after it. Tests build their "server" text with
+// this so they cannot agree with a parser that has the rule wrong.
+export const serverReply = (chunks, { finalNewline = false } = {}) => {
+  const bytes = (text) => new TextEncoder().encode(text).length;
+  return `)]}'\n\n${chunks.map((json) => `${bytes(json) + 2}\n${json}`).join('\n')}${finalNewline ? '\n' : ''}`;
+};
+
+// A Request that behaves like the real one where it matters here: sending it
+// uses up the body, and cloning a used body throws.
+class FakeRequest {
+  constructor(url, init = {}) {
+    this.url = url;
+    this.method = init.method || 'GET';
+    this.body = init.body ?? null;
+    this.bodyUsed = false;
+  }
+
+  clone() {
+    if (this.bodyUsed) throw new TypeError('Request.clone: Body has already been consumed.');
+    return new FakeRequest(this.url, { method: this.method, body: this.body });
+  }
+
+  async text() {
+    this.bodyUsed = true;
+    return this.body ?? '';
+  }
+}
+
 export function loadPage({
   url = 'https://www.google.com/maps/place/X/@48.86,2.35,15z',
   localStorage = storage()
@@ -206,9 +251,18 @@ export function loadPage({
       for (const fn of messageListeners) fn({ source: win, data });
     },
     location: { href: url, origin: 'https://www.google.com' },
-    fetch: async () => ({ clone: () => ({ text: async () => '' }) }),
+    fetch: async (input, init) => {
+      // Sending a Request uses its body up, as a real fetch does.
+      if (input instanceof FakeRequest) input.bodyUsed = true;
+      (win.fetchCalls ||= []).push({ url: typeof input === 'string' ? input : input?.url, init });
+      // A queue of replies, one per call, for a test that walks several pages.
+      const text = win.fetchReplies?.length ? win.fetchReplies.shift() : (win.fetchReplyText ?? '');
+      return new FakeResponse(text, {
+        status: 200, url: typeof input === 'string' ? input : input?.url, type: 'basic', redirected: false
+      });
+    },
     XMLHttpRequest: function () {},
-    sessionStorage: { getItem: () => null, setItem: () => {} }
+    sessionStorage: (() => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) }; })()
   };
   win.nativeSends = [];
   win.XMLHttpRequest.prototype = { open() {}, send() { win.nativeSends.push(this); }, addEventListener() {} };
@@ -252,7 +306,8 @@ export function loadPage({
     },
     requestAnimationFrame: (fn) => setTimeout(fn, 0),
     getComputedStyle: () => ({ getPropertyValue: () => '', display: 'block' }),
-    sessionStorage: win.sessionStorage, localStorage, XMLHttpRequest: win.XMLHttpRequest, fetch: win.fetch
+    sessionStorage: win.sessionStorage, localStorage, XMLHttpRequest: win.XMLHttpRequest, fetch: win.fetch,
+    Request: FakeRequest, Response: FakeResponse
   };
   sandbox.globalThis = sandbox;
 
@@ -278,6 +333,45 @@ export function loadPage({
 
       win.XMLHttpRequest.prototype.send.call(xhr, body);
       loadend?.();
+    },
+    // Delivers a reply the way Maps now does, as fetch(new Request(...)) with
+    // the body inside the Request and no second argument.
+    replyByRequest: async (text, body) => {
+      win.fetchReplyText = text;
+      const request = new FakeRequest(
+        'https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=hspqX', { method: 'POST', body });
+      await win.fetch(request);
+      await wait(20);
+    },
+    // The reply the page's own code gets back for a gallery call sent as
+    // fetch(new Request(...)), after any hook has had its say. replies are
+    // the server's answers in order: the first goes to Maps' own call and the
+    // rest to whatever follow-up requests the hook makes.
+    receiveByRequest: async (replies, body) => {
+      win.fetchReplies = [...replies];
+      win.fetchCalls = [];
+      const request = new FakeRequest(
+        'https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=hspqX', { method: 'POST', body });
+      const response = await win.fetch(request);
+      await wait(20);
+      return response;
+    },
+    // Any batchexecute call sent as fetch(new Request(...)), by rpc name, for
+    // calls that are not the gallery. Returns the response the page receives.
+    receiveRpc: async (rpc, replies, body = 'f.req=%5B%5D') => {
+      win.fetchReplies = [...replies];
+      win.fetchCalls = [];
+      const request = new FakeRequest(
+        `https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=${rpc}`, { method: 'POST', body });
+      const response = await win.fetch(request);
+      await wait(20);
+      return response;
+    },
+    // The same call with the body in the second argument, as older Maps did.
+    replyByFetch: async (text, body) => {
+      win.fetchReplyText = text;
+      await win.fetch('https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=hspqX', { method: 'POST', body });
+      await wait(20);
     },
     sent: (type) => posted.filter((m) => m?.type === type)
   };

@@ -1,5 +1,10 @@
 # Unlocker — for Google Maps™
 
+<p align="center">
+  <a href="https://addons.mozilla.org/en-US/firefox/addon/unlocker-for-google-maps/"><img alt="Download for Firefox" src="https://img.shields.io/badge/Download%20for-Firefox-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white"></a>
+  <a href="https://chromewebstore.google.com/detail/unlocker-%E2%80%94-for-google-map/jekkpekmgniicmbhnpejageopllocbea"><img alt="Download for Chrome" src="https://img.shields.io/badge/Download%20for-Chrome-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white"></a>
+</p>
+
 **Google Maps, with the "sign in to see more" wall knocked down.**
 
 You look up a restaurant. Half the photos are missing. The opening hours are not available. You tap *More reviews* and a sign-in box lands in your face.
@@ -21,22 +26,25 @@ Search the reviews, sort them, open the full list.
 ### Full photos and reviews
 **Why you need it.** Every time you open Maps, Google gives your browser a
 session, and the session decides how much you see. A **full session** shows
-everything: all the photos, every review, page after page. A **limited
-session** shows only few photos and reviews, then stops.
+everything. A **limited session** shows only 10 photos, then stops.
 
-**What it does.** It notices when you got a limited session, borrows a full
-one from a private window, and reloads the tab. Then it checks that the
-gallery and reviews are complete. If they aren't, it tries another, up to
-five times. A full session that works is remembered, so the next place you
-open is already fine.
+**What it does, in order.**
+1. **Fills the gallery in the page.** When the first photo page comes back
+   capped, the extension asks Google for the next pages itself, using the
+   token Google already sent, merges them, and hands Maps the longer list.
+   Maps then keeps paging as you scroll. No reload, no cookie touched. Pages
+   Maps asks for on its own are left alone.
+2. **Falls back to a full session.** If the fill fails, it borrows a full
+   session from a private window and reloads the tab. It checks the gallery
+   again and tries another session if needed, up to five times. A full
+   session that works is remembered.
 
 **What to expect.**
-- The tab reloads by itself, sometimes more than once. That's expected.
-- A short message tells you when it succeeded.
+- Step 1 is silent. Step 2 reloads the tab, sometimes more than once.
 - Some places stay limited whoever asks. It stops after five tries instead of
   reloading forever.
 
-Before it runs, the toolbar asks you to agree to the cookie change. It reads
+Only step 2 changes cookies. The toolbar asks you to agree first. It reads
 and replaces Google cookies, and saves a working set locally for reuse. This
 signs you out of Google in that browser. Turn the switch off to withdraw
 consent; turning it on again asks again.
@@ -59,7 +67,7 @@ consent; turning it on again asks again.
 
 Works in **Firefox 142+** and **Chromium 111+** browsers (Chrome, Edge, Brave, Vivaldi, Opera).
 
-Build the packages once, from a checkout of this repository:
+Install from the [Firefox add-on page](https://addons.mozilla.org/en-US/firefox/addon/unlocker-for-google-maps/) or the [Chrome Web Store](https://chromewebstore.google.com/detail/unlocker-%E2%80%94-for-google-map/jekkpekmgniicmbhnpejageopllocbea). To run from source instead, build the packages once, from a checkout of this repository:
 
 ```
 node tools/build.mjs
@@ -97,6 +105,7 @@ The browser requires you to enable this yourself.
 
 ## Good to know
 
+- **Found a bug?** [Open an issue on GitHub](https://github.com/thibautsabot/google-maps-unlocker-extension/issues). Please report problems there, not in store reviews.
 - It shows what Google already sends anonymous visitors, nothing more.
 - Google redesigns Maps now and then. A big change can break a feature
   until the extension is updated.

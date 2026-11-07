@@ -7,7 +7,7 @@
 // wants the gecko block. Chrome runs service_worker and rejects both.
 
 import { execFileSync } from 'node:child_process';
-import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { hostPermissions, mapsMatches } from './google-domains.mjs';
 
@@ -19,8 +19,16 @@ const { version } = manifest;
 const SHIP = ['common', 'hours', 'options', 'photos', 'popup', 'reviews', 'icons', 'service-worker.js', 'LICENSE', 'PRIVACY.md'];
 
 const DIST = join(ROOT, 'dist');
-rmSync(DIST, { recursive: true, force: true });
+
+// dist/ holds build output and nothing else is meant to live there, but
+// captures and notes have ended up in it. Only the packages this script
+// writes are removed, so anything else survives a build.
 mkdirSync(DIST, { recursive: true });
+for (const name of readdirSync(DIST)) {
+  if (/^gm-native-maps-(firefox|chromium)(-[\d.]+\.zip)?$/.test(name)) {
+    rmSync(join(DIST, name), { recursive: true, force: true });
+  }
+}
 
 function pack(name, edit) {
   const dir = join(DIST, name);

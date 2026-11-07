@@ -186,7 +186,123 @@
     return new Set(found.map((url) => url.split('=')[0]));
   };
 
+  // One gallery reply made from several. The first page's reply is kept as it
+  // is, and the photo lists of the later pages are appended to its list, so
+  // everything else in it (categories, session, flags) is untouched. The
+  // announced total and the continuation token are left alone as well: Maps
+  // reads the list it is given and decides about paging from those.
+  //
+  // payloads are the parsed gallery payloads, first page first. Photos already
+  // present are skipped, by id, so a page that repeats another adds nothing.
+  // Returns { payload, added } or null when the first page has no list.
+  function mergePages(payloads) {
+    const [first, ...later] = payloads;
+    const found = first ? describe(first) : null;
+    if (!found) return null;
+
+    const listIndex = first.findIndex((value) => Array.isArray(value) && value.length === found.size
+      && value.some(isPhotoEntry));
+    if (listIndex < 0) return null;
+
+    const idOf = (entry) => (Array.isArray(entry) && typeof entry[0] === 'string' ? entry[0] : null);
+    const merged = first.slice();
+    const list = first[listIndex].slice();
+    const seen = new Set(list.map(idOf).filter(Boolean));
+    let added = 0;
+
+    for (const payload of later) {
+      const more = payload ? describe(payload) : null;
+      if (!more) continue;
+
+      const source = payload.find((value) => Array.isArray(value) && value.length === more.size
+        && value.some(isPhotoEntry));
+      for (const entry of source || []) {
+        const id = idOf(entry);
+        if (!isPhotoEntry(entry) || !id || seen.has(id)) continue;
+        seen.add(id);
+        list.push(entry);
+        added++;
+      }
+    }
+
+    merged[listIndex] = list;
+    return { payload: merged, added };
+  }
+
+  // JSON the way Google writes it. Inside the inner string of a reply, the
+  // server writes "=" as \u003d where JSON.stringify writes it plain, and
+  // leaves "/" alone. Measured on a real gallery reply: 10566 characters from
+  // the server, 10495 from JSON.stringify, a gap of 71, and 12 "=" signs in
+  // it at six extra characters each is 72. Escaping "/" as well, as a first
+  // attempt did, made the rebuild 361 characters too long. "&", "<" and ">"
+  // are escaped the same way as "=" in Google's other payloads and do not
+  // occur in a gallery reply, so they are escaped too. A reply that differs
+  // from the server's by even one character is not the same reply.
+  function googleJson(value) {
+    return JSON.stringify(value).replace(/[<>&=\u2028\u2029]/g, (char) => {
+      return `\\u${char.charCodeAt(0).toString(16).padStart(4, '0')}`;
+    });
+  }
+
+  // A payload put back into the framing batchexecute replies use. When the
+  // server's own reply is given, it is edited in place: the gallery chunk is
+  // rewritten and every other chunk (the "di", "af.httprm" and "e" trailers
+  // that come after it) is kept, with the length line recounted. Maps reads
+  // those trailers, so a reply without them is not the same reply.
+  // How the server frames a reply, measured on real gallery replies: each
+  // chunk is "<n>\n<json>\n", and n counts the bytes from the newline that
+  // ends the length line through the newline after the json, so n is the
+  // json's UTF-8 length plus two. Seen as 1872 for a 1870 character body,
+  // 54 for a 52 character trailer and 25 for a 23 character one. The server
+  // also leaves no newline after its last chunk, so the end of the original
+  // is kept as it was.
+  const byteLength = (text) => new TextEncoder().encode(text).length;
+  const chunkLength = (json) => byteLength(json) + 2;
+
+  function frameReply(rpc, payload, original = null) {
+    const inner = googleJson(payload);
+    const chunkBody = googleJson([['wrb.fr', rpc, inner, null, null, null, 'generic']]);
+    const plain = () => `)]}'\n\n${chunkLength(chunkBody)}\n${chunkBody}\n`;
+
+    if (typeof original !== 'string') return plain();
+
+    const prefix = original.match(/^\)\]\}'\n+/)?.[0];
+    if (!prefix) return plain();
+
+    const bytes = new TextEncoder().encode(original.slice(prefix.length));
+    const decoder = new TextDecoder();
+    const out = [];
+    let replaced = false;
+    let at = 0;
+
+    while (at < bytes.length) {
+      let digits = at;
+      while (digits < bytes.length && bytes[digits] >= 48 && bytes[digits] <= 57) digits++;
+      if (digits === at) { out.push(decoder.decode(bytes.slice(at))); break; }
+
+      const declared = Number(decoder.decode(bytes.slice(at, digits)));
+      // n runs from the newline after the digits, so the json sits between
+      // that newline and the one that ends the chunk.
+      const segment = bytes.slice(digits, digits + declared);
+      let json = decoder.decode(segment);
+      if (json.startsWith('\n')) json = json.slice(1);
+      if (json.endsWith('\n')) json = json.slice(0, -1);
+      at = digits + declared;
+
+      if (!replaced && json.includes(`"wrb.fr","${rpc}"`)) {
+        out.push(`${chunkLength(chunkBody)}\n${chunkBody}`);
+        replaced = true;
+      } else {
+        out.push(`${declared}\n${json}`);
+      }
+    }
+
+    if (!replaced) return plain();
+    return `${prefix}${out.join('\n')}${original.endsWith('\n') ? '\n' : ''}`;
+  }
+
   window.__GMX = {
-    describe, askedFor, single, photoUrls, envelopes, learnLayout, DEFAULT_LAYOUT
+    describe, askedFor, single, photoUrls, envelopes, learnLayout, DEFAULT_LAYOUT, mergePages, frameReply,
+    googleJson, at
   };
 })();
