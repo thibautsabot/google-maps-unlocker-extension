@@ -160,8 +160,12 @@ export function loadBackground(world, { quiet = true } = {}) {
 // Replies and requests in the shape captured from Maps (tests/lib/real.mjs),
 // with only the counts varied. They were once invented to match the code,
 // which is how a wrong slot and a broken viewer check both passed.
+// Real tokens are hundreds of characters; the reader finds one by that, so a
+// short test name is padded out to look like one.
+export const longToken = (name) => (name == null ? null : `${name}-${'A'.repeat(300)}`);
+
 export const galleryReply = (photos, total, token = 'token', first = 0) => frame('hspqX',
-  page(Array.from({ length: photos }, (_, i) => photo(`PHOTO${first + i}`)), total, 'session', token, false));
+  page(Array.from({ length: photos }, (_, i) => photo(`PHOTO${first + i}`)), total, 'session', longToken(token), false));
 
 const asking = (...calls) => new URLSearchParams({
   'f.req': JSON.stringify([calls.map(([rpc, a]) => [rpc, JSON.stringify(a), null, 'generic'])])
@@ -242,6 +246,7 @@ export function loadPage({
   const posted = [];
   const logs = [];
   const messageListeners = [];
+  const scrollListeners = [];
   const scripts = new Map();
 
   const win = {
@@ -287,7 +292,8 @@ export function loadPage({
     querySelector: () => null,
     createElement: element,
     images: [],
-    addEventListener: () => {},
+    addEventListener: (type, fn) => { if (type === 'scroll') scrollListeners.push(fn); },
+    scrollingElement: null,
     head: element(),
     body: element()
   };
@@ -372,6 +378,11 @@ export function loadPage({
       win.fetchReplyText = text;
       await win.fetch('https://www.google.com/maps/_/MapsWizUi/data/batchexecute?rpcids=hspqX', { method: 'POST', body });
       await wait(20);
+    },
+    // The grid scrolled to its end (or not), as a scroll event on a pane.
+    scroll: (atEnd = true) => {
+      const pane = { nodeType: 1, scrollHeight: 1000, clientHeight: 400, scrollTop: atEnd ? 600 : 0 };
+      for (const fn of scrollListeners) fn({ target: pane });
     },
     sent: (type) => posted.filter((m) => m?.type === type)
   };

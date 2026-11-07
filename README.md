@@ -32,10 +32,13 @@ everything. A **limited session** shows only 10 photos, then stops.
 1. **Fills the gallery in the page.** When the first photo page comes back
    capped, the extension asks Google for the next pages itself, using the
    token Google already sent, merges them, and hands Maps the longer list.
-   Maps then keeps paging as you scroll. No reload, no cookie touched. Pages
+   Maps then keeps paging as you scroll. No reload, no cookie touched. The
+   token and the "limited" flag are found by their shape in Google's reply
+   rather than by fixed position, so small layout changes do not break it. Pages
    Maps asks for on its own are left alone.
-2. **Falls back to a full session.** If the fill fails, it borrows a full
-   session from a private window and reloads the tab. It checks the gallery
+2. **Falls back to a full session.** If the fill fails, or Maps does not
+   page on after it, it borrows a full session from a private window and
+   reloads the tab. It checks the gallery
    again and tries another session if needed, up to five times. A full
    session that works is remembered.
 

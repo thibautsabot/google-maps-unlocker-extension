@@ -1,21 +1,25 @@
 (() => {
   'use strict';
 
-  // Reports what this page load was given. It changes nothing: no cookies,
-  // no reload, no hiding. The background script decides what to do with it.
+  // Reports what this page load was given. No cookies, no reload, no hiding:
+  // the background script decides what to do with it.
   //
   //   photos already in the page or the place payload   gm-page-photos
   //   a gallery request leaving                          gm-gallery-asking
   //   the first gallery reply                            gm-roll-outcome
   //   a later page of that same gallery                  gm-gallery-paged
   //   a reply that is one open photo, not the grid       gm-gallery-idle
+  //   a filled grid that Maps then does not page on      gm-fill-stalled
+  //
+  // It does change one thing: a capped first reply is replaced by a longer
+  // one (see filledReply), and only the background touches cookies.
   //
   // The first reply is reported once. Later replies of the same gallery are
   // follow-up pages, and only the first of those is reported — the end of a
   // long scroll is not another cap.
 
   const { describe, askedFor, single, photoUrls, envelopes, learnLayout, DEFAULT_LAYOUT,
-    mergePages, frameReply, at } = window.__GMX;
+    mergePages, frameReply, at, tokenSlot, learnTokenSlot, capFlags, trueSlots } = window.__GMX;
 
   const state = {
     firstPage: null, serverTotal: null, asked: null, rpc: null, seen: 0, viewerOnly: false,
@@ -55,6 +59,40 @@
   // Where this RPC keeps its page size: the place a paging session taught,
   // or the place captured from real traffic until one does.
   const layoutFor = (rpc) => learned[rpc] || DEFAULT_LAYOUT;
+
+  // Where each RPC's reply keeps the token for the next page. Taught by a
+  // follow-up request that sent back a token from the previous reply, and
+  // otherwise found by shape (read.js tokenSlot): the one long string.
+  const TOKEN_KEY = 'gmnx.tokenSlot';
+  const tokenSlots = (() => {
+    try { return JSON.parse(localStorage.getItem(TOKEN_KEY) || '{}') || {}; } catch (_) { return {}; }
+  })();
+
+  // { index, value } of the token in a reply, or null when none stands out.
+  function tokenOf(rpc, payload) {
+    const index = tokenSlot(payload, tokenSlots[rpc]);
+    return index === null ? null : { index, value: payload[index] };
+  }
+
+  function rememberTokenSlot(rpc, index) {
+    if (tokenSlots[rpc] === index) return;
+    tokenSlots[rpc] = index;
+    try { localStorage.setItem(TOKEN_KEY, JSON.stringify(tokenSlots)); } catch (_) {}
+    console.warn(LOG, `the next-page token in ${rpc} replies sits at [${index}] — learned from a session that paged`);
+  }
+
+  // Top-level slots that are true in replies that were not capped, so the
+  // fill never clears one of them. Kept across loads.
+  const NORMAL_KEY = 'gmnx.normalFlags';
+  const normalFlags = (() => {
+    try { return new Set(JSON.parse(localStorage.getItem(NORMAL_KEY) || '[]')); } catch (_) { return new Set(); }
+  })();
+  function rememberNormalFlags(payload) {
+    const before = normalFlags.size;
+    for (const i of trueSlots(payload)) normalFlags.add(i);
+    if (normalFlags.size === before) return;
+    try { localStorage.setItem(NORMAL_KEY, JSON.stringify([...normalFlags])); } catch (_) {}
+  }
 
   // Said even with the feature off: a layout that moved is Google changing
   // the payload, which is worth knowing whatever else is going on.
@@ -116,6 +154,10 @@
     const layout = learnLayout(firstExchange.args, firstExchange.reply, firstExchange.served,
       argsOf(requestBody, state.rpc));
     if (layout) rememberLayout(state.rpc, layout);
+
+    const sent = at(argsOf(requestBody, state.rpc), layoutFor(state.rpc).token);
+    const slot = learnTokenSlot(firstExchange.reply, sent);
+    if (slot !== null) rememberTokenSlot(state.rpc, slot);
   }
 
   // A later reply from the same RPC. One photo is someone opening a picture
@@ -253,6 +295,52 @@
     if (urls.size) notePagePhotos(urls, false);
   }
 
+  // --- a fill that Maps does not page on --------------------------------------
+  //
+  // After the fill, Maps should ask for the next page once the grid is
+  // scrolled to its end. If the grid sits at its end and nothing is asked for,
+  // the list was accepted but the way to more was not, which the fill cannot
+  // fix by itself. That is reported once, and the background then falls back
+  // to a private-window session. A gallery request leaving, or a reply to one,
+  // proves Maps does page and ends the watch for good.
+  const STALL_MS = 3500;
+  const AT_END_PX = 80;
+  const stall = {
+    rpc: null, report: null, timer: null, watching: false, done: false,
+
+    arm(rpc, report) {
+      if (this.done) return;
+      this.rpc = rpc;
+      this.report = report;
+      if (this.watching) return;
+      this.watching = true;
+      try { document.addEventListener('scroll', (event) => this.scrolled(event.target), true); } catch (_) {}
+    },
+
+    // Maps asked for another page, or got one: the fill worked.
+    proven() {
+      this.done = true;
+      clearTimeout(this.timer);
+    },
+
+    atEnd(node) {
+      const el = node && node.nodeType === 1 ? node : document.scrollingElement;
+      if (!el || !(el.scrollHeight > el.clientHeight)) return false;
+      return el.scrollHeight - el.scrollTop - el.clientHeight <= AT_END_PX;
+    },
+
+    scrolled(target) {
+      if (this.done || !this.rpc || !this.atEnd(target)) return;
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => {
+        if (this.done) return;
+        this.done = true;
+        console.warn(LOG, 'fill: the grid reached its end and Maps asked for no further page');
+        this.report?.();
+      }, STALL_MS);
+    }
+  };
+
   // --- fetch and XHR ----------------------------------------------------------
   //
   // Maps sends the gallery call by XHR. fetch is hooked the same way in case
@@ -271,6 +359,7 @@
   let askedAnnounced = false;
 
   const noteAsked = (batch, body) => {
+    if (batch && stall.rpc && envelopes(body).some((entry) => entry.rpc === stall.rpc)) stall.proven();
     if (!batch || askedAnnounced || askedFor(body, { layoutFor }) === null) return;
     askedAnnounced = true;
 
@@ -351,37 +440,23 @@
     try { return await input.clone().text(); } catch (_) { return null; }
   }
 
-  // --- the grid filled from every page the server will serve -----------------
+  // --- the capped first page, filled from the pages after it ------------------
   //
   // A session cut to ten photos a page still serves the later pages when the
-  // token is followed (measured: pages of 10, 10, 10, 10, 10 and 8, then an
-  // empty one). Off by default. GMGallery.fillGrid(true) turns it on for this
-  // tab, and the choice is kept for the session only.
+  // token is followed. With the photos switch on, the capped reply is
+  // replaced by a longer one and Maps pages on from there. Nothing stored
+  // means on; GMGallery.fillGrid(false) turns it off for this tab's session,
+  // which leaves the private-window roll as the only remedy.
   const FILL_KEY = 'gmnx.fillGrid';
-  // '0' off, '1' or 'full' the whole fill. 'swap' and 'short' exist to find out
-  // why Maps does not open a gallery it was given: swap hands over the
-  // server's own text in a new Response, short hands over the merged reply
-  // cut back to the original list. Whichever of the three opens, and which
-  // does not, says whether the Response or the longer list is the problem.
-  // With nothing stored the fill is on whenever the photos switch is, and
-  // fillGrid(false) turns it off for the session. The private-window roll
-  // stays behind it: it starts only when a capped reply could not be filled.
-  const fillMode = () => {
+  const fillOn = () => {
     try {
       const value = sessionStorage.getItem(FILL_KEY);
-      if (value === null || value === undefined) return photosOn ? 'full' : 'off';
-      return value === '1' || value === 'clear' ? 'full' : (['full', 'all', 'swap', 'short', 'echo', 'full-keep'].includes(value) ? value : 'off');
-    } catch (_) { return photosOn ? 'full' : 'off'; }
+      if (value === '1') return true;
+      if (value === '0') return false;
+    } catch (_) {}
+    return photosOn;
   };
-  const fillOn = () => fillMode() !== 'off';
   const MAX_FILL_PAGES = 15;
-
-  // The server's reply and the one handed to Maps, side by side, so their
-  // framing can be compared when Maps does not show the longer list. Held in
-  // this variable only; GMGallery.filled() reports lengths and structure,
-  // never the text itself.
-  let filledPair = null;
-  const keepFilled = (original, replacement) => { filledPair = { original, replacement }; };
 
   // A Response carrying other text that still looks like the one the network
   // gave. A constructed Response has no url, type "default" and redirected
@@ -416,7 +491,7 @@
     let payload = first;
     let got = 0;
     for (let n = 0; n < MAX_FILL_PAGES; n++) {
-      const token = payload?.[5];
+      const token = tokenOf(call[0], payload)?.value;
       if (typeof token !== 'string') break;
 
       slot[last] = token;
@@ -450,7 +525,7 @@
   // The reply Maps should read: the first page with the later pages' photos
   // appended. Null whenever there is nothing to improve or anything fails, in
   // which case the original reply goes through untouched.
-  async function filledReply(url, body, text, keepLength = false, all = false, clearFlag = false) {
+  async function filledReply(url, body, text) {
     try {
       let first = null;
       let rpc = null;
@@ -475,7 +550,8 @@
       if (typeof sentToken === 'string' && sentToken) {
         return decline('this is a follow-up page Maps asked for itself');
       }
-      if (typeof first[5] !== 'string') return decline('it carries no continuation token');
+      const firstToken = tokenOf(rpc, first);
+      if (!firstToken) return decline('it carries no continuation token');
 
       const found = describe(first);
       const asked = askedFor(body, { rpc, served: found.size, layoutFor });
@@ -484,11 +560,13 @@
       // announcing more. Without the page size nothing is claimed.
       if (typeof asked !== 'number') return decline('the page size asked for could not be read');
       if (!(typeof found.total === 'number' && found.total > found.size && found.size < asked)) {
+        // A reply that is not capped shows which true slots are ordinary.
+        rememberNormalFlags(first);
         return decline(`not capped (${found.size} served of ${found.total}, asked for ${asked})`);
       }
 
       const started = performance.now();
-      const more = await laterPages(url, body, first, all ? Infinity : asked - found.size);
+      const more = await laterPages(url, body, first, asked - found.size);
       const took = Math.round(performance.now() - started);
       trace('fill', { pages: more.length, ms: took });
       if (!more.length) return decline('the server gave no further page');
@@ -501,45 +579,21 @@
       // same is done here: the list stops where the pages used stop, and the
       // token is the last page's, not the first's. 'all' keeps the old
       // behaviour, the whole list at once, for comparison.
-      if (!all) merged.payload[5] = more[more.length - 1]?.[5] ?? null;
+      merged.payload[firstToken.index] = tokenOf(rpc, more[more.length - 1])?.value ?? null;
 
       // The capped reply carries true in slot 15, which the uncapped first
       // page does not have at all. While it is set Maps does not ask for the
       // next page: with it emptied, scrolling went on to load the rest of
       // the list. It is emptied whenever a capped reply is filled.
-      if (clearFlag && merged.payload[15] === true) {
-        merged.payload[15] = null;
-        console.log(LOG, 'fill: mode clear, slot 15 emptied');
-      }
-
-      // For the diagnostic: the same reply with the list cut back to what the
-      // server first sent, so only the length differs from the original.
-      if (keepLength) {
-        const listIndex = merged.payload.findIndex((v, i) => Array.isArray(v) && Array.isArray(first[i])
-          && v.length > first[i].length && v.some((e) => Array.isArray(e)));
-        if (listIndex >= 0) merged.payload[listIndex] = merged.payload[listIndex].slice(0, first[listIndex].length);
-        console.log(LOG, `fill: mode short, list cut back to ${first[listIndex]?.length}`);
-        return frameReply(rpc, merged.payload, text);
-      }
+      const cleared = capFlags(first, [...normalFlags]);
+      for (const index of cleared) merged.payload[index] = null;
+      if (cleared.length) console.log(LOG, `fill: cleared the limited flag at [${cleared.join(', ')}]`);
 
       // Said whether or not the photos switch is on: this runs only when
       // fillGrid(true) asked for it, so the log is the answer to that ask.
       console.log(LOG, `the grid was filled from ${more.length} more pages: ${found.size} photos became`
         + ` ${found.size + merged.added}, and Maps waited ${took} ms for it`);
 
-      // What the reply says about paging, before and after, so a reply Maps
-      // will not page on can be compared with one it will. Values of the
-      // scalar slots, the first characters of any token, and lengths.
-      const slotsOf = (payload) => payload.map((value, index) => {
-        if (value === null || value === undefined) return null;
-        if (typeof value === 'boolean' || typeof value === 'number') return `${index}=${value}`;
-        if (typeof value === 'string') return `${index}=str(${value.length})${value.slice(0, 6)}`;
-        if (Array.isArray(value)) return `${index}=arr(${value.length})`;
-        return `${index}=${typeof value}`;
-      }).filter(Boolean).join(' ');
-      console.log(LOG, `fill: slots before: ${slotsOf(first)}`);
-      console.log(LOG, `fill: slots after:  ${slotsOf(merged.payload)}`);
-      for (const [n, page] of more.entries()) console.log(LOG, `fill: slots of page ${n + 2}: ${slotsOf(page)}`);
       return frameReply(rpc, merged.payload, text);
     } catch (error) {
       console.warn(LOG, 'could not fill the grid, leaving the reply as it is', error?.message || error);
@@ -587,79 +641,14 @@
           console.log(LOG, 'fill: a gallery reply arrived, checking whether it is capped');
           fillBusy.add(url);
           try {
-            const mode = fillMode();
-
-            // swap hands back the server's own text, but only for the gallery
-            // reply: the other batchexecute calls on the page are not part of
-            // the test, and replacing them would blur what it shows.
-            let isGallery = false;
-            eachGalleryCall(text, (name, payload) => {
-              if (single(payload) || !describe(payload)) return false;
-              isGallery = true;
-              return true;
-            });
-            // echo parses the gallery reply and writes it straight back with
-            // nothing changed. If Maps still refuses it, the rewrite itself
-            // is what it dislikes, not the photos in it.
-            const echoed = () => {
-              let rebuilt = null;
-              eachGalleryCall(text, (name, payload) => {
-                if (single(payload) || !describe(payload)) return false;
-                rebuilt = frameReply(name, payload, text);
-                return true;
-              });
-              if (rebuilt) {
-                let at = 0;
-                while (at < text.length && at < rebuilt.length && text[at] === rebuilt[at]) at++;
-                console.log(LOG, rebuilt === text
-                  ? 'fill: echo rebuilt the reply and it is identical to the server\'s'
-                  : `fill: echo rebuilt the reply and it differs from the server\'s at character ${at}`
-                    + ` (${text.length} became ${rebuilt.length})`);
-                // Where the original and the rebuild first differ INSIDE the
-                // gallery chunk, past the length line. Character codes only,
-                // so no photo URL or token is printed.
-                const chunkOf = (full) => {
-                  const m = full.match(/^\)\]\}'\n+(\d+)\n/);
-                  return m ? { declared: Number(m[1]), body: full.slice(m[0].length) } : null;
-                };
-                const a = chunkOf(text);
-                const b = chunkOf(rebuilt);
-                if (a && b) {
-                  const enc = (t) => new TextEncoder().encode(t).length;
-                  const gallery = (c) => c.body.slice(0, c.body.indexOf('\n') < 0 ? undefined : c.body.indexOf('\n'));
-                  const ga = gallery(a);
-                  const gb = gallery(b);
-                  let i = 0;
-                  while (i < ga.length && i < gb.length && ga[i] === gb[i]) i++;
-                  const codes = (t) => [...t.slice(Math.max(0, i - 4), i + 6)].map((c) => c.charCodeAt(0).toString(16)).join(' ');
-                  console.log(LOG, `fill: echo header server ${a.declared} rebuilt ${b.declared};`
-                    + ` server body ${ga.length} chars ${enc(ga)} bytes, rebuilt body ${gb.length} chars ${enc(gb)} bytes;`
-                    + ` bodies ${ga === gb ? 'identical' : `first differ at ${i}`}`);
-                  if (ga !== gb) {
-                    console.log(LOG, `fill: echo server codes at ${i}: ${codes(ga)}`);
-                    console.log(LOG, `fill: echo rebuilt codes at ${i}: ${codes(gb)}`);
-                  }
-                  const tailA = a.body.slice(ga.length);
-                  const tailB = b.body.slice(gb.length);
-                  console.log(LOG, `fill: echo after the gallery chunk, server ${JSON.stringify(tailA.slice(0, 60))}`
-                    + ` rebuilt ${JSON.stringify(tailB.slice(0, 60))}`);
-                }
-                if (rebuilt !== text) {
-                  console.log(LOG, 'fill: echo around the difference, server:', JSON.stringify(text.slice(Math.max(0, at - 30), at + 30)).replace(/[A-Za-z0-9_-]{25,}/g, '…'));
-                  console.log(LOG, 'fill: echo around the difference, rebuilt:', JSON.stringify(rebuilt.slice(Math.max(0, at - 30), at + 30)).replace(/[A-Za-z0-9_-]{25,}/g, '…'));
-                }
-              }
-              return rebuilt;
-            };
-            const filled = mode === 'swap'
-              ? (isGallery ? text : null)
-              : mode === 'echo'
-                ? (isGallery ? echoed() : null)
-                : await filledReply(url, body, text, mode === 'short', mode === 'all', mode !== 'full-keep');
+            const filled = await filledReply(url, body, text);
             if (filled) {
-              console.log(LOG, `fill: handing Maps a new Response (mode ${mode}, ${filled.length} chars)`);
-              keepFilled(text, filled);
-              report(mode === 'full' ? filled : text);
+              console.log(LOG, `fill: handing Maps a longer list (${filled.length} chars)`);
+              report(filled);
+              const filledRpc = state.rpc;
+              stall.arm(filledRpc, () => tell({ type: 'gm-fill-stalled',
+                firstPage: state.firstPage, serverTotal: state.serverTotal, asked: state.asked,
+                galleryUrl: rememberedGalleryUrl() || location.href }));
               return replaceResponse(res, filled);
             }
           } finally {
@@ -728,36 +717,12 @@
 
     forget: () => ask('gm-forget', 'asked — see the message'),
 
-    // How the reply handed to Maps differs from the server's own, in framing
-    // only: lengths, chunk headers and where the gallery list sits. For
-    // working out why Maps does not show a list it was given.
-    filled: () => {
-      if (!filledPair) return 'nothing has been filled yet';
-      const describeFrame = (text) => {
-        const lines = text.split('\n');
-        const chunkHeader = lines.slice(0, 6).map((l) => (l.length > 30 ? `${l.length} chars` : l));
-        const declared = Number(lines[2]);
-        const rest = lines.slice(3).join('\n');
-        return {
-          totalChars: text.length,
-          firstLines: chunkHeader,
-          declaredLength: Number.isFinite(declared) ? declared : null,
-          charsAfterLengthLine: rest.length,
-          bytesAfterLengthLine: new TextEncoder().encode(rest).length,
-          chunks: (text.match(/\n\d+\n\[/g) || []).length,
-          frames: [...text.matchAll(/\["([a-z]+(?:\.[a-z]+)*)","([A-Za-z0-9]+)"/g)].map((m) => `${m[1]}:${m[2]}`)
-        };
-      };
-      return { original: describeFrame(filledPair.original), replacement: describeFrame(filledPair.replacement) };
-    },
-
-    // Turns on filling the grid from every page the server will serve, for
-    // this tab's session. fillGrid(false) turns it off, fillGrid() reports.
+    // fillGrid() reports, fillGrid(true) forces the fill on for this tab even
+    // with the photos switch off, fillGrid(false) turns it off.
     fillGrid: (on) => {
-      if (on === undefined) return fillOn() ? `on for this session (${fillMode()})` : 'off';
-      const value = on === true ? '1' : (on === 'clear' ? 'full' : (['swap', 'short', 'full', 'all', 'echo', 'full-keep'].includes(on) ? on : '0'));
-      try { sessionStorage.setItem(FILL_KEY, value); } catch (_) { return 'could not be saved'; }
-      return value === '0' ? 'off' : `on for this session (${fillMode()}): reload the place, then open the Photos grid`;
+      if (on === undefined) return fillOn() ? 'on for this session' : 'off';
+      try { sessionStorage.setItem(FILL_KEY, on === true ? '1' : '0'); } catch (_) { return 'could not be saved'; }
+      return on === true ? 'on for this session: reload the place, then open the Photos grid' : 'off';
     },
 
     // The shape of each gallery request and reply seen on this page, with no
@@ -828,7 +793,7 @@
       const pages = [{ page: 1, got: seen.size, added: seen.size, status: 200, total: payload?.[1] ?? null }];
 
       for (let page = 2; page <= maxPages; page++) {
-        const token = payload?.[5];
+        const token = tokenOf(call[0], payload)?.value;
         if (typeof token !== 'string') { pages.push({ page, stoppedBecause: 'no token to follow' }); break; }
 
         slot[last] = token;
@@ -892,8 +857,8 @@
       });
 
       const layout = layoutFor(call[0]);
-      const token = reply?.[5];
-      if (typeof token !== 'string') return 'the last reply carried no continuation token at [5]';
+      const token = tokenOf(call[0], reply || [])?.value;
+      if (typeof token !== 'string') return 'the last reply carried no continuation token';
 
       // Same request, token put where Maps puts it for the next page.
       let node = args;
@@ -926,7 +891,7 @@
         gotGalleryFrame: !!next,
         list: Array.isArray(next?.[0]) ? next[0].length : null,
         total: next?.[1] ?? null,
-        nextToken: peek(next?.[5]),
+        nextToken: peek(next ? tokenOf(call[0], next)?.value : null),
         head: next ? null : text.slice(0, 120)
       };
     }

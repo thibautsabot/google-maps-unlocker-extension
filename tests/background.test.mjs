@@ -52,6 +52,33 @@ const photoView = 'https://www.google.com/maps/@48.86,2.35,3a,75y,90t/data=!3m7'
     !world.did.length);
 }
 
+// --- the in-page fill did not make Maps page on ------------------------------
+// The page reports an uncapped-looking list, so nothing rolls; only when Maps
+// then never asks for more is the session treated as capped.
+{
+  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send({ type: 'gm-roll-outcome', firstPage: 20, serverTotal: 116, asked: 20 });
+  t.check('stalled fill: a filled list alone changes no cookie and reloads nothing',
+    !world.did.some((d) => d.startsWith('cookie') || d === 'RELOAD'));
+
+  await send({ type: 'gm-fill-stalled', firstPage: 10, serverTotal: 116, asked: 20 });
+  t.check('stalled fill: the fallback reuses the saved session and reloads',
+    world.did.includes('RELOAD') && world.did.some((d) => d.startsWith('cookie')));
+  t.check('stalled fill: and says why',
+    world.did.some((d) => d.includes('in-page fill did not make Maps page on')));
+}
+{
+  const world = fakeBrowser({ features: { hours: false, photos: false } });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send({ type: 'gm-fill-stalled', firstPage: 10, serverTotal: 116, asked: 20 });
+  t.check('stalled fill: with the photos switch off nothing happens', !world.did.length);
+}
+
 // --- the ordinary capped page -----------------------------------------------
 {
   const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });

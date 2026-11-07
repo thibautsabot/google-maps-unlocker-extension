@@ -229,6 +229,46 @@
     return { payload: merged, added };
   }
 
+  // Where a reply keeps the token for its next page. A hint (the slot a
+  // session that paged taught) is used while it still holds a string. Without
+  // one, the token is the longest string at the top of the payload, and only
+  // if it is clearly longer than the rest: the session id beside it is 23
+  // characters where the token is hundreds. Null when nothing stands out, so
+  // a moved token ends the fill rather than following a wrong string.
+  const TOKEN_MIN = 40;
+  function tokenSlot(payload, hint = null) {
+    if (!Array.isArray(payload)) return null;
+    if (Number.isInteger(hint) && typeof payload[hint] === 'string' && payload[hint]) return hint;
+
+    const strings = payload.map((v, i) => [i, typeof v === 'string' ? v.length : 0]).filter(([, n]) => n >= TOKEN_MIN);
+    if (!strings.length) return null;
+    strings.sort((a, b) => b[1] - a[1]);
+    return strings.length === 1 || strings[0][1] >= strings[1][1] * 2 ? strings[0][0] : null;
+  }
+
+  // Where the previous reply kept the token Maps just sent back. Exact, and
+  // used to teach tokenSlot: the slot of the reply whose string is the one
+  // the request carries.
+  function learnTokenSlot(reply, sentToken) {
+    if (!Array.isArray(reply) || typeof sentToken !== 'string' || !sentToken) return null;
+    const slots = reply.map((v, i) => (v === sentToken ? i : -1)).filter((i) => i >= 0);
+    return slots.length === 1 ? slots[0] : null;
+  }
+
+  // The top-level slots holding true. A limited session's reply carries one
+  // that an unlimited first page does not have, and while it is set Maps does
+  // not ask for the next page. normal lists the slots seen true in replies
+  // that were not capped; those are left alone. With no reference yet every
+  // true slot counts, which is only the one flag on every reply measured.
+  function capFlags(payload, normal = []) {
+    if (!Array.isArray(payload)) return [];
+    return payload.map((v, i) => (v === true && !normal.includes(i) ? i : -1)).filter((i) => i >= 0);
+  }
+
+  function trueSlots(payload) {
+    return Array.isArray(payload) ? payload.map((v, i) => (v === true ? i : -1)).filter((i) => i >= 0) : [];
+  }
+
   // JSON the way Google writes it. Inside the inner string of a reply, the
   // server writes "=" as \u003d where JSON.stringify writes it plain, and
   // leaves "/" alone. Measured on a real gallery reply: 10566 characters from
@@ -303,6 +343,6 @@
 
   window.__GMX = {
     describe, askedFor, single, photoUrls, envelopes, learnLayout, DEFAULT_LAYOUT, mergePages, frameReply,
-    googleJson, at
+    googleJson, at, tokenSlot, learnTokenSlot, capFlags, trueSlots
   };
 })();

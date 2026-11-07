@@ -1,6 +1,6 @@
 // What the scripts running inside the page report, and when they keep quiet.
 
-import { loadPage, galleryReply, askingFor, askingBlind, askingBatched, storage, suite, wait, serverReply }
+import { loadPage, galleryReply, askingFor, askingBlind, askingBatched, storage, suite, wait, serverReply, longToken }
   from './lib/harness.mjs';
 import { REQUEST_1, REQUEST_2, REPLY_1, REPLY_2, TOKEN_1, REQUEST_CAPPED, REPLY_CAPPED, frame, shifted }
   from './lib/real.mjs';
@@ -94,7 +94,7 @@ const t = suite('page');
   })();
   t.check('probe: the page size asked for is unchanged', paging?.[1] === 20);
   t.check('probe: only the token slot differs from the original request',
-    paging?.[2] === 'TOKEN-FROM-REPLY' && paging?.[0] === null && paging?.[4] === 1);
+    paging?.[2] === longToken('TOKEN-FROM-REPLY') && paging?.[0] === null && paging?.[4] === 1);
   t.check('probe: the answer describes the shape', result?.status === 200 && result?.gotGalleryFrame === true);
   t.check('probe: the answer gives lengths, not photos', result?.list === 2 && result?.total === 45);
   t.check('probe: no token or URL is handed back',
@@ -233,7 +233,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  t.check('fill: on by default when the photos switch is on', page.api().fillGrid() === 'on for this session (full)');
+  t.check('fill: on by default when the photos switch is on', page.api().fillGrid() === 'on for this session');
   page.api().fillGrid(false);
   t.check('fill: fillGrid(false) turns it off', page.api().fillGrid() === 'off');
 
@@ -248,7 +248,7 @@ const photosIn = async (response) => {
   const page = loadPage();
   page.switchOn();
   page.api().fillGrid(true);
-  t.check('fill: turned on for the session', page.api().fillGrid() === 'on for this session (full)');
+  t.check('fill: turned on for the session', page.api().fillGrid() === 'on for this session');
 
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0),
@@ -361,45 +361,26 @@ const photosIn = async (response) => {
     parse(frameReply('hspqX', merged.payload, 'not a reply')).length === 1);
 }
 
-// --- fill modes that isolate why a gallery will not open ----------------------
+// --- the page size asked for bounds the fill -----------------------------------
 {
-  const modes = async (mode) => {
-    const page = loadPage();
-    page.switchOn();
-    page.api().fillGrid(mode);
-    const response = await page.receiveByRequest([
-      galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
-    ], askingFor(20));
-    return { page, response, count: await photosIn(response) };
-  };
+  const page = loadPage();
+  page.switchOn();
+  const response = await page.receiveByRequest([
+    galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
+  ], askingFor(20));
+  t.check('fill: one page more, up to the page size asked for', await photosIn(response) === 20);
 
-  const full = await modes('full');
-  t.check('mode full: one page more, up to the page size asked for', full.count === 20);
-
-  const everything = await modes('all');
-  t.check('mode all: the whole list is handed over', everything.count === 28);
-
-  const swap = await modes('swap');
-  t.check('mode swap: the server\'s own text, in a new Response', swap.count === 10 && swap.response !== undefined);
-  t.check('mode swap: no follow-up request is made', swap.page.win.fetchCalls.length === 1);
-
-  // A batchexecute call that is not the gallery must go through untouched.
+  // A batchexecute call that is not the gallery goes through untouched.
   const other = loadPage();
   other.switchOn();
-  other.api().fillGrid('swap');
   const otherText = ")]}'\n\n20\n[[\"wrb.fr\",\"T4jwAf\",\"[1]\"]]\n";
   const otherResponse = await other.receiveRpc('T4jwAf', [otherText]);
-  t.check('mode swap: a call that is not the gallery gets no new Response',
-    !other.logs.some((l) => l.includes('handing Maps a new Response')) && await otherResponse.text() === otherText);
-  t.check('mode swap: it says it handed over a new Response',
-    swap.page.logs.some((l) => l.includes('mode swap')));
+  t.check('fill: a call that is not the gallery is left as it is',
+    other.win.fetchCalls.length === 1 && await otherResponse.text() === otherText);
 
-  const short = await modes('short');
-  t.check('mode short: the merged reply is cut back to the first list', short.count === 10);
-  t.check('mode short: the follow-up was still fetched', short.page.win.fetchCalls.length === 2);
-
-  const page = loadPage();
-  t.check('modes: an unknown value turns the fill off', (page.api().fillGrid('nonsense'), page.api().fillGrid() === 'off'));
+  const unknown = loadPage();
+  unknown.api().fillGrid('nonsense');
+  t.check('fill: an unknown value turns the fill off', unknown.api().fillGrid() === 'off');
 }
 
 // --- GMGallery.trace() -------------------------------------------------------
@@ -438,7 +419,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.api().fillGrid('full');
+  page.api().fillGrid(true);
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
   ], askingFor(20));
@@ -460,43 +441,17 @@ const photosIn = async (response) => {
     return [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)]
       .map((m) => JSON.parse(JSON.parse(`"${m[1]}"`)))[0];
   };
-  const make = async (mode) => {
+  const make = async () => {
     const page = loadPage();
     page.switchOn();
-    page.api().fillGrid(mode);
     return read(await page.receiveByRequest([
       galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(10, 116, 'T3', 20)
     ], askingFor(20)));
   };
 
-  const filled = await make('full');
-  t.check('token: the filled reply carries the last page\'s token', filled[5] === 'T2');
+  const filled = await make();
+  t.check('token: the filled reply carries the last page\'s token', filled[5] === longToken('T2'));
   t.check('token: the list is exactly the page size asked for', filled[0].length === 20);
-
-  const all = await make('all');
-  t.check('token: the whole-list mode leaves the first token alone', all[5] === 'T1');
-  t.check('token: and holds every page', all[0].length === 30);
-}
-
-// --- echo: rebuilding a reply with nothing changed ---------------------------
-{
-  const trailer1 = '[["di",21],["af.httprm",21,"-250655609989403101",100]]';
-  const trailer2 = '[["e",4,null,null,140]]';
-  const page = loadPage();
-  const { googleJson } = page.win.__GMX;
-  const inner = googleJson(REPLY_1);
-  const chunk = googleJson([['wrb.fr', 'hspqX', inner, null, null, null, 'generic']]);
-  const server = serverReply([chunk, trailer1, trailer2]);
-
-  page.switchOn();
-  page.api().fillGrid('echo');
-  const response = await page.receiveByRequest([server], askingFor(20));
-  const text = await response.text();
-
-  t.check('echo: a reply rebuilt unchanged is identical to the server\'s', text === server);
-  t.check('echo: the log says it was identical',
-    page.logs.some((l) => l.includes('identical to the server')));
-  t.check('echo: no follow-up request is made', page.win.fetchCalls.length === 1);
 }
 
 // --- escapes: a rebuilt reply must be written the way the server writes it ------
@@ -528,14 +483,6 @@ const photosIn = async (response) => {
   t.check('escapes: the test reply carries escaped characters', chunk.includes('\\\\u003d') || chunk.includes('\\u003d'));
   t.check('escapes: rebuilding it unchanged gives the server\'s text exactly',
     frameReply('hspqX', payload, server) === server);
-
-  // And through the hooked fetch, in echo mode.
-  const page = loadPage();
-  page.switchOn();
-  page.api().fillGrid('echo');
-  const response = await page.receiveByRequest([server], askingFor(20));
-  t.check('escapes: echo hands back the same text', await response.text() === server);
-  t.check('escapes: and says it is identical', page.logs.some((l) => l.includes('identical to the server')));
 }
 
 // --- escapes measured against a real gallery reply ----------------------------
@@ -586,37 +533,74 @@ const photosIn = async (response) => {
   t.check('bytes: a longer list declares its own chunk\'s byte length plus two', declared === bytes(gallery) + 2);
 }
 
-// --- mode clear: the limited flag in slot 15 ----------------------------------
-// A capped reply carries true in slot 15, which an uncapped first page does
-// not have. 'clear' empties it, to find out whether it stops Maps from paging.
+// --- the limited flag and the token are found, not assumed --------------------
+// A capped reply carries a true that an uncapped first page does not have, and
+// while it is set Maps does not ask for the next page. The fill empties it
+// wherever it sits, and leaves alone a true that uncapped replies also carry.
 {
-  const cappedWithFlag = (token) => {
+  const withFlagAt = (index, token) => {
     const payload = JSON.parse(JSON.stringify(REPLY_CAPPED));
-    payload[5] = token;
+    payload[15] = null;
+    payload[index] = true;
+    payload[5] = longToken(token);
     return frame('hspqX', payload);
   };
-  const read = async (mode) => {
-    const page = loadPage();
+  const read = async (replies, page = loadPage()) => {
     page.switchOn();
-    page.api().fillGrid(mode);
-    const response = await page.receiveByRequest([cappedWithFlag('T1'), galleryReply(10, 45, 'T2', 10)], askingFor(20));
+    const response = await page.receiveByRequest(replies, askingFor(20));
     const text = await response.text();
-    const payload = [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)]
-      .map((m) => JSON.parse(JSON.parse(`"${m[1]}"`)))[0];
-    return { payload, logs: page.logs };
+    return { page, payload: [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)]
+      .map((m) => JSON.parse(JSON.parse(`"${m[1]}"`)))[0] };
   };
 
-  const full = await read('full');
-  const clear = await read('clear');
+  t.check('flag: the capped reply really carries one', REPLY_CAPPED[15] === true);
 
-  t.check('clear: the capped reply really carries the flag', REPLY_CAPPED[15] === true);
-  t.check('clear: in full mode the flag is emptied too', full.payload[15] === null || full.payload[15] === undefined);
-  t.check('clear: in clear mode the flag is emptied', clear.payload[15] === null || clear.payload[15] === undefined);
-  t.check('clear: it says so in the log', clear.logs.some((l) => l.includes('slot 15 emptied')));
-  t.check('clear: the old name still works and means the same as full',
-    (() => { const page = loadPage(); page.api().fillGrid('clear'); return page.api().fillGrid() === 'on for this session (full)'; })());
-  t.check('clear: nothing else changes',
-    clear.payload[0].length === full.payload[0].length && clear.payload[5] === full.payload[5]);
+  const at15 = await read([frame('hspqX', Object.assign(JSON.parse(JSON.stringify(REPLY_CAPPED)), { 5: longToken('T1') })),
+    galleryReply(10, 45, 'T2', 10)]);
+  t.check('flag: emptied where it is today', !at15.payload[15]);
+  t.check('flag: and the log says where', at15.page.logs.some((l) => l.includes('cleared the limited flag at [15]')));
+
+  const moved = await read([withFlagAt(17, 'T1'), galleryReply(10, 45, 'T2', 10)]);
+  t.check('flag: emptied when Google moves it', !moved.payload[17] && !moved.payload[15]);
+  t.check('flag: nothing else changes', moved.payload[0].length === 20 && moved.payload[1] === 45);
+
+  // A true that an uncapped reply carries too is ordinary and stays.
+  const page = loadPage();
+  page.switchOn();
+  const uncapped = JSON.parse(JSON.stringify(REPLY_CAPPED));
+  uncapped[15] = null;
+  uncapped[11] = true;
+  uncapped[0] = [...uncapped[0], ...uncapped[0]]; // as many as were asked for
+  await page.receiveByRequest([frame('hspqX', uncapped)], askingFor(20));
+  const capped = JSON.parse(JSON.stringify(REPLY_CAPPED));
+  capped[11] = true;
+  capped[5] = longToken('T1');
+  const kept = await read([frame('hspqX', capped), galleryReply(10, 45, 'T2', 10)], page);
+  t.check('flag: a true that uncapped replies carry is left alone', kept.payload[11] === true && !kept.payload[15]);
+}
+{
+  // The token is found by shape: the long string, wherever it sits.
+  const { tokenSlot, learnTokenSlot } = loadPage().win.__GMX;
+  const payload = [[], 45, null, 'x'.repeat(23), null, null, null, null, null, null, false, null, null, null, null, null, longToken('A')];
+  t.check('token: the long string is found where it sits', tokenSlot(payload) === 16);
+  t.check('token: a hint that still holds a string wins', tokenSlot(payload, 3) === 3);
+  t.check('token: nothing long means no token', tokenSlot([[], 45, null, 'x'.repeat(23)]) === null);
+  t.check('token: two similar long strings are not guessed between',
+    tokenSlot([longToken('A'), longToken('B')]) === null);
+  t.check('token: the slot is taught by the token Maps sent back',
+    learnTokenSlot(payload, longToken('A')) === 16 && learnTokenSlot(payload, 'other') === null);
+
+  // The fill works when the token has moved.
+  const moved = (token, first) => {
+    const p = JSON.parse(JSON.stringify(REPLY_CAPPED));
+    p[5] = null;
+    p[16] = longToken(token);
+    return frame('hspqX', p);
+  };
+  const page = loadPage();
+  page.switchOn();
+  const response = await page.receiveByRequest([moved('T1'), moved('T2')], askingFor(20));
+  t.check('token: a fill follows a token that moved', page.win.fetchCalls.length >= 2 && response !== undefined);
 }
 
 // --- follow-up pages Maps asks for itself are not filled again ----------------
@@ -627,7 +611,7 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
-  page.api().fillGrid('full');
+  page.api().fillGrid(true);
   const response = await page.receiveByRequest([galleryReply(10, 116, 'T3', 20)], followUp);
 
   t.check('follow-up: the request really carries a token',
@@ -640,7 +624,7 @@ const photosIn = async (response) => {
   // The first request, with no token, is still filled.
   const first = loadPage();
   first.switchOn();
-  first.api().fillGrid('full');
+  first.api().fillGrid(true);
   const filled = await first.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)
   ], askingFor(20));
@@ -680,6 +664,43 @@ const photosIn = async (response) => {
   await page.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
   t.check('report: with the fill off the capped reply reaches the roll',
     page.sent('gm-roll-outcome')[0]?.firstPage === 10);
+}
+
+// --- a fill that Maps does not page on ------------------------------------------
+// The list was accepted but Maps never asks for more, so the fill did not fix
+// the cap. The background is told once, and takes over with another session.
+{
+  const filledPage = async () => {
+    const page = loadPage();
+    page.switchOn();
+    await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
+    return page;
+  };
+
+  const stalled = await filledPage();
+  stalled.scroll(false);
+  await wait(3700);
+  t.check('stall: scrolled but not to the end, nothing is reported', stalled.sent('gm-fill-stalled').length === 0);
+  stalled.scroll(true);
+  await wait(3700);
+  t.check('stall: at the end with no request, the background is told once',
+    stalled.sent('gm-fill-stalled').length === 1);
+  stalled.scroll(true);
+  await wait(3700);
+  t.check('stall: and not again', stalled.sent('gm-fill-stalled').length === 1);
+
+  const paged = await filledPage();
+  paged.scroll(true);
+  await paged.replyByRequest(galleryReply(10, 116, 'T3', 20), REQUEST_2);
+  await wait(3700);
+  t.check('stall: Maps asking for the next page proves the fill worked', paged.sent('gm-fill-stalled').length === 0);
+
+  const plain = loadPage();
+  plain.switchOn();
+  await plain.receiveByRequest([galleryReply(20, 116, 'T1', 0)], askingFor(20));
+  plain.scroll(true);
+  await wait(3700);
+  t.check('stall: a reply that was not filled is not watched', plain.sent('gm-fill-stalled').length === 0);
 }
 
 // --- switched off -----------------------------------------------------------

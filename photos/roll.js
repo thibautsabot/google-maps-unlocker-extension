@@ -326,7 +326,15 @@ async function onManualBorrow(msg, tabId) {
 }
 
 handles('photos', 'gm-roll-outcome', onOutcome);
+// The in-page fill gave Maps a longer list and Maps never asked for more, so
+// the session is as good as capped. The private-window roll takes over.
+async function onFillStalled(msg, tabId) {
+  await say(tabId, 'the in-page fill did not make Maps page on, so falling back to another session');
+  await act(true, msg, tabId, 'the fill did not make Maps page on');
+}
+
 handles('photos', 'gm-gallery-paged', onPaged);
+handles('photos', 'gm-fill-stalled', onFillStalled);
 handles('photos', 'gm-forget', onForget);
 handles('photos', 'gm-borrow-private', onManualBorrow);
 
