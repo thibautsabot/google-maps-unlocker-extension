@@ -319,9 +319,11 @@
       if (this.done) return;
       this.rpc = rpc;
       this.report = report;
+      // Only the first fill sets the count. A filled follow-up arms again, and
+      // its own page is already counted by observe.
+      if (this.watching) return;
       this.loaded = loaded;
       this.total = total;
-      if (this.watching) return;
       this.watching = true;
       try { document.addEventListener('scroll', (event) => this.scrolled(event.target), true); } catch (_) {}
     },
@@ -594,10 +596,25 @@
         const stuck = clearedFlags.filter((index) => first[index] === true);
         if (!stuck.length) return decline('this is a follow-up page Maps asked for itself');
 
-        const patched = first.slice();
-        for (const index of stuck) patched[index] = null;
-        console.log(LOG, `fill: follow-up page, cleared the limited flag at [${stuck.join(', ')}]`);
-        return frameReply(rpc, patched, text);
+        // A capped session serves 10 where Maps asked for 20. The first fill
+        // handed over exactly 20; a follow-up left short makes Maps redraw
+        // the grid, which showed as the scroll jumping to the top. So the
+        // next server page is merged in until the page is the size asked for.
+        const own = describe(first);
+        const wanted = askedFor(body, { rpc, served: own.size, layoutFor });
+        let merged = { payload: first.slice(), added: 0 };
+        if (typeof wanted === 'number' && own.size < wanted && tokenOf(rpc, first)) {
+          const more = await laterPages(url, body, first, wanted - own.size);
+          const joined = more.length ? mergePages([first, ...more]) : null;
+          if (joined && joined.added) {
+            merged = joined;
+            merged.payload[tokenOf(rpc, first).index] = tokenOf(rpc, more[more.length - 1])?.value ?? null;
+          }
+        }
+        for (const index of stuck) merged.payload[index] = null;
+        console.log(LOG, `fill: follow-up page, cleared the limited flag at [${stuck.join(', ')}]`
+          + (merged.added ? `, and joined the next page: ${own.size} photos became ${own.size + merged.added}` : ''));
+        return frameReply(rpc, merged.payload, text);
       }
       const firstToken = tokenOf(rpc, first);
       if (!firstToken) return decline('it carries no continuation token');

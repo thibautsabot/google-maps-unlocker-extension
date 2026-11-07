@@ -635,9 +635,9 @@ const photosIn = async (response) => {
 // The server sets the flag on each page it sends. Left on a follow-up page,
 // Maps stops after one more, which is how a place with 112 photos ended at 30.
 {
-  const cappedPage = (token, first) => {
+  const cappedPage = (token, first, size = 10) => {
     const payload = JSON.parse(JSON.stringify(REPLY_CAPPED));
-    payload[0] = galleryPayload(10, first);
+    payload[0] = galleryPayload(size, first);
     payload[5] = longToken(token);
     return frame('hspqX', payload);
   };
@@ -654,10 +654,45 @@ const photosIn = async (response) => {
   await page.receiveByRequest([cappedPage('T1', 0), cappedPage('T2', 10)], askingFor(20));
   page.win.fetchCalls.length = 0;
 
-  const followUp = await page.receiveByRequest([cappedPage('T3', 20)], REQUEST_2);
+  const followUp = await page.receiveByRequest([cappedPage('T3', 20, 20)], REQUEST_2);
   t.check('flag: a follow-up page has the flag cleared too', !(await flagged(followUp)));
-  t.check('flag: and nothing extra is fetched for it', page.win.fetchCalls.length === 1);
+  t.check('flag: a reply that is already the size asked for needs nothing extra', page.win.fetchCalls.length === 1);
   t.check('flag: the log says so', page.logs.some((l) => l.includes('follow-up page, cleared the limited flag')));
+}
+
+// --- follow-up pages are the size Maps asked for ---------------------------------
+// A capped session serves 10 where 20 were asked for. Left short, the grid
+// redraws and the scroll jumps to the top, so the next page is joined in.
+{
+  const sizeOf = async (response) => {
+    const text = await response.text();
+    const found = [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)]
+      .map((m) => JSON.parse(JSON.parse(`"${m[1]}"`)))[0];
+    return { size: found?.[0]?.length ?? 0, flag: found?.[15] };
+  };
+  const capped = (n, total, token, first) => {
+    const payload = JSON.parse(JSON.stringify(REPLY_CAPPED));
+    payload[0] = galleryReply(n, total, token, first) && JSON.parse(
+      JSON.stringify([...Array(n)].map((_, i) => REPLY_CAPPED[0][i % REPLY_CAPPED[0].length].map((v, j) => (j === 0 ? `ID${first + i}` : v)))));
+    payload[1] = total;
+    payload[5] = longToken(token);
+    return frame('hspqX', payload);
+  };
+
+  const page = loadPage();
+  page.switchOn();
+  await page.receiveByRequest([capped(10, 112, 'T1', 0), capped(10, 112, 'T2', 10)], askingFor(20));
+
+  const joined = await page.receiveByRequest([capped(10, 112, 'T3', 20), capped(10, 112, 'T4', 30)], REQUEST_2);
+  const out = await sizeOf(joined);
+  t.check('follow-up: a short page is joined with the next to the size asked for', out.size === 20);
+  t.check('follow-up: one extra page is fetched for it', page.win.fetchCalls.length === 2);
+  t.check('follow-up: the flag is cleared on it', !out.flag);
+  t.check('follow-up: the log says it joined', page.logs.some((l) => l.includes('joined the next page')));
+
+  // The last page has nothing to join.
+  const last = await page.receiveByRequest([capped(8, 112, null, 50)], REQUEST_2);
+  t.check('follow-up: the last page is left as it is', (await sizeOf(last)).size === 8 && page.win.fetchCalls.length === 1);
 }
 
 // --- what the background is told, and the private-window fallback ---------------
