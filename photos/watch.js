@@ -317,6 +317,20 @@
       try { document.addEventListener('scroll', (event) => this.scrolled(event.target), true); } catch (_) {}
     },
 
+    // A reply that came after the fill. The list having ended is not a stall:
+    // Maps rightly asks for nothing more after an empty page, one without a
+    // token, or a page shorter than the ones before it, which is how the
+    // server marks its last. Only a list that could go on and does not is.
+    biggest: 0,
+    observe(rpc, payload) {
+      if (this.done || !this.rpc || rpc !== this.rpc) return;
+      const found = describe(payload);
+      const size = found ? found.size : 0;
+      const ended = size === 0 || !tokenOf(rpc, payload) || (this.biggest > 0 && size < this.biggest);
+      this.biggest = Math.max(this.biggest, size);
+      if (ended) this.proven();
+    },
+
     // Maps asked for another page, or got one: the fill worked.
     proven() {
       this.done = true;
@@ -367,6 +381,11 @@
   };
 
   function readReply(batch, text, requestBody, url = null) {
+    if (batch) eachGalleryCall(text, (rpc, payload) => {
+      if (single(payload)) return false;
+      stall.observe(rpc, payload);
+      return true;
+    });
     if (batch) record(text, requestBody, url);
     if (batch) onFirstGallery(text, requestBody);
     else onPlacePayload(text);

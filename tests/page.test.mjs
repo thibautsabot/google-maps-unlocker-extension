@@ -724,6 +724,29 @@ const photosIn = async (response) => {
   await wait(3700);
   t.check('stall: Maps asking for the next page proves the fill worked', paged.sent('gm-fill-stalled').length === 0);
 
+  // Replies are delivered with a body that names no gallery call, so only the
+  // reply is seen by the watch and no request is there to cancel it early.
+  const deliver = (page, ...replies) => page.receiveRpc('hspqX', replies);
+  const quiet = async (page) => { page.scroll(true); await wait(3700); return page.sent('gm-fill-stalled').length; };
+
+  const ended = await filledPage();
+  await deliver(ended, galleryReply(10, 116, 'T3', 20));
+  await deliver(ended, galleryReply(8, 116, null, 30));
+  t.check('stall: reaching the server\'s last page is not a stall', await quiet(ended) === 0);
+
+  const shorter = await filledPage();
+  await deliver(shorter, galleryReply(10, 116, 'T3', 20));
+  await deliver(shorter, galleryReply(6, 116, 'T4', 30));
+  t.check('stall: a page shorter than the ones before it ends the watch', await quiet(shorter) === 0);
+
+  const empty = await filledPage();
+  await deliver(empty, galleryReply(0, 116, null, 30));
+  t.check('stall: an empty page ends the watch', await quiet(empty) === 0);
+
+  const going = await filledPage();
+  await deliver(going, galleryReply(10, 116, 'T3', 20));
+  t.check('stall: a list that could go on and does not still falls back', await quiet(going) === 1);
+
   const plain = loadPage();
   plain.switchOn();
   await plain.receiveByRequest([galleryReply(20, 116, 'T1', 0)], askingFor(20));
