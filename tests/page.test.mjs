@@ -749,6 +749,31 @@ const photosIn = async (response) => {
   t.check('restore: a fall with no growth is left alone', el3.scrollTop === 58);
 }
 
+// --- the outcome says when the list was lengthened here --------------------------
+{
+  const page = loadPage();
+  page.switchOn();
+  await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
+  t.check('outcome: a lengthened list is marked as filled', page.sent('gm-roll-outcome')[0]?.filled === true);
+
+  const plain = loadPage();
+  plain.switchOn();
+  await plain.receiveByRequest([galleryReply(20, 116, 'T1', 0)], askingFor(20));
+  t.check('outcome: the server\'s own list is not', plain.sent('gm-roll-outcome')[0]?.filled === false);
+}
+
+// --- a strip of neighbouring photos is not the end of the gallery ---------------
+{
+  const page = loadPage();
+  page.switchOn();
+  await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
+  // The open photo's neighbours: two photos, a total of two, no token.
+  await page.receiveRpc('hspqX', [galleryReply(2, 2, null, 0)]);
+  await wait(50);
+  t.check('strip: two photos of two do not end the watch as a cut list',
+    page.sent('gm-fill-stalled').length === 0);
+}
+
 // --- what the background is told, and the private-window fallback ---------------
 // A filled list that reaches the page size is reported as served in full, so
 // no private window opens. A capped reply that could not be filled is reported

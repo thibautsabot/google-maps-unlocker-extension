@@ -138,6 +138,7 @@
   // --- the first gallery reply, then any page after it -----------------------
 
   let reportedFirst = false;
+  let reportingFilled = false;
   let viewerLogged = false;
   let reportedFollowUp = false;
   let firstExchange = null;
@@ -229,7 +230,8 @@
         + (found.total ? ` of ${found.total}` : '')
         + (asked ? `, having asked for ${asked}` : ', and what it asked for is unknown'));
 
-      tell({ type: 'gm-roll-outcome', firstPage: found.size, serverTotal: found.total, asked });
+      tell({ type: 'gm-roll-outcome', firstPage: found.size, serverTotal: found.total, asked,
+        filled: reportingFilled });
       return true;
     });
   }
@@ -342,6 +344,9 @@
     observe(rpc, payload) {
       if (this.done || !this.rpc || rpc !== this.rpc) return;
       const found = describe(payload);
+      // A reply whose total is no more than its own size is a strip of photos
+      // (the open photo's neighbours), not a page of this gallery.
+      if (found && typeof found.total === 'number' && found.total <= found.size) return;
       const size = found ? found.size : 0;
       const ended = size === 0 || !tokenOf(rpc, payload) || (this.biggest > 0 && size < this.biggest);
       this.biggest = Math.max(this.biggest, size);
@@ -716,7 +721,14 @@
         // and a reply the fill could not improve is reported as it came, so
         // the private-window roll still starts as the fallback.
         let reported = false;
-        const report = (reply) => { if (!reported) { reported = true; readReply(batch, reply, body, url); } };
+        const report = (reply) => {
+          if (reported) return;
+          reported = true;
+          // The background must know the list was lengthened here: the session
+          // behind it is still capped, whatever the list now looks like.
+          reportingFilled = reply !== text;
+          try { readReply(batch, reply, body, url); } finally { reportingFilled = false; }
+        };
 
         // The capped first page is replaced by a fuller one when asked for.
         // Anything that goes wrong leaves the original response in place.

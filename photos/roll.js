@@ -55,6 +55,21 @@ async function onOutcome(msg, tabId) {
   if (typeof firstPage !== 'number') return;
 
   stopWaitingForPage(tabId);
+
+  // The page lengthened a capped list itself, so the list looks whole while
+  // the session behind it is not. It says nothing about the cap being lifted,
+  // so the memory of what was tried stays. After a swap this is that swap
+  // failing, and the next session is tried at once rather than waiting for a
+  // scroll to the end of the list.
+  if (msg.filled) {
+    await say(tabId, `capped at the server, lengthened in the page: ${firstPage} of ${serverTotal}`);
+    if (pending.has(tabId)) {
+      settle(tabId, false, 'the session was still capped, and only the in-page fill lengthened the list');
+      await lift(msg, tabId);
+    }
+    return;
+  }
+
   const verdict = capState(firstPage, serverTotal, asked);
 
   if (verdict === UNKNOWN) {

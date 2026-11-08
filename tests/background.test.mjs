@@ -79,6 +79,41 @@ const photoView = 'https://www.google.com/maps/@48.86,2.35,3a,75y,90t/data=!3m7'
   t.check('stalled fill: with the photos switch off nothing happens', !world.did.length);
 }
 
+// --- a swap that only gets a lengthened list is a failed swap -----------------
+// The page fills a capped list itself, so after a reload it reports a whole-
+// looking list. That must not clear what was tried, and must not be called a
+// lifted cap. The next session is tried without waiting for another scroll.
+{
+  const filled = { type: 'gm-roll-outcome', firstPage: 20, serverTotal: 112, asked: 20, filled: true };
+  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send({ type: 'gm-fill-stalled', firstPage: 10, serverTotal: 112, asked: 20 });
+  const reloadsAfterStall = world.did.filter((d) => d === 'RELOAD').length;
+  t.check('filled swap: the stall reuses the saved session first', reloadsAfterStall === 1);
+
+  await send({ type: 'gm-hello', url: place });
+  await send(filled);
+  t.check('filled swap: it is not called a lifted cap', !world.did.some((d) => d.includes('verdict: lifted')));
+  t.check('filled swap: it is called still capped', world.did.some((d) => d.includes('verdict: still capped')));
+  t.check('filled swap: the next session is tried at once, from a private window',
+    world.did.some((d) => d.includes('borrowing a fresh session from a private window (roll 1 of 5)')));
+  t.check('filled swap: the saved session is not put back again',
+    world.did.filter((d) => d === 'cookie NID=saved-one').length === 1);
+}
+{
+  const filled = { type: 'gm-roll-outcome', firstPage: 20, serverTotal: 112, asked: 20, filled: true };
+  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send(filled);
+  t.check('filled load: with no swap pending nothing is touched',
+    !world.did.some((d) => d.startsWith('cookie') || d === 'RELOAD' || d.startsWith('private')));
+  t.check('filled load: and it is not called uncapped', !world.did.some((d) => d.startsWith('not capped')));
+}
+
 // --- the ordinary capped page -----------------------------------------------
 {
   const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
