@@ -343,15 +343,24 @@
       if (!ended) return;
 
       const short = typeof this.total === 'number' && this.loaded < this.total * SHORT_OF_TOTAL;
-      this.proven();
+      this.finish();
       if (!short) return;
 
       console.warn(LOG, `fill: the list ended at ${this.loaded} of ${this.total}, so this session is cut`);
       this.report?.();
     },
 
-    // Maps asked for another page, or got one: the fill worked.
+    // Maps asked for another page: it does page, so reaching the end of the
+    // grid is no longer a sign of trouble. The count goes on, though, because
+    // the list can still end short of its total.
+    paged: false,
     proven() {
+      this.paged = true;
+      clearTimeout(this.timer);
+    },
+
+    // The watch is over: the list ended, whatever came of it.
+    finish() {
       this.done = true;
       clearTimeout(this.timer);
     },
@@ -363,7 +372,7 @@
     },
 
     scrolled(target) {
-      if (this.done || !this.rpc || !this.atEnd(target)) return;
+      if (this.done || this.paged || !this.rpc || !this.atEnd(target)) return;
       clearTimeout(this.timer);
       this.timer = setTimeout(() => {
         if (this.done) return;

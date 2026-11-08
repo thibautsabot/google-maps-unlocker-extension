@@ -805,6 +805,16 @@ const photosIn = async (response) => {
   await deliver(going, galleryReply(10, 116, 'T3', 20));
   t.check('stall: a list that could go on and does not still falls back', await quiet(going) === 1);
 
+  // The real sequence: Maps sends each follow-up request itself, which used to
+  // switch the watch off before the end of the list could be judged.
+  const realistic = await filledPage();
+  await realistic.receiveByRequest([galleryReply(10, 116, 'T3', 20), galleryReply(10, 116, 'T4', 30)], REQUEST_2);
+  await realistic.receiveByRequest([galleryReply(10, 116, 'T5', 40), galleryReply(8, 116, null, 50)], REQUEST_2);
+  await realistic.receiveByRequest([galleryReply(0, 116, null, 60)], REQUEST_2);
+  await wait(50);
+  t.check('stall: with Maps\' own requests in between, a list cut short still falls back',
+    realistic.sent('gm-fill-stalled').length === 1);
+
   const plain = loadPage();
   plain.switchOn();
   await plain.receiveByRequest([galleryReply(20, 116, 'T1', 0)], askingFor(20));
