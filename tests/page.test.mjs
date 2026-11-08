@@ -14,6 +14,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45), askingFor(20));
 
   const [outcome] = page.sent('gm-roll-outcome');
@@ -25,6 +26,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(20, 45), askingFor(20));
 
   const [outcome] = page.sent('gm-roll-outcome');
@@ -33,6 +35,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByFetch(galleryReply(10, 45), askingFor(20));
 
   const [outcome] = page.sent('gm-roll-outcome');
@@ -50,6 +53,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45), askingFor(20));
 
   const shots = page.api().capture();
@@ -72,6 +76,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   const first = await page.api().probeNextPage();
   t.check('probe: nothing seen yet is said plainly', typeof first === 'string' && first.includes('open the Photos grid'));
 
@@ -103,6 +108,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45, null), askingFor(20));
   const result = await page.api().probeNextPage();
   t.check('probe: a reply with no token is reported, not retried',
@@ -115,6 +121,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(10, 40, 'T1', 0), askingFor(20));
   page.win.fetchCalls.length = 0;
   page.win.fetchReplies = [
@@ -136,6 +143,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(10, 40, 'T1', 0), askingFor(20));
   page.win.fetchReplies = [galleryReply(10, 40, 'T2', 0)];
 
@@ -147,6 +155,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(10, 40, 'T1', 0), askingFor(20));
   page.win.fetchReplies = [galleryReply(10, 1000, 'T2', 10)];
 
@@ -159,6 +168,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   const result = await page.api().probeAllPages();
   t.check('walk: nothing seen yet is said plainly', typeof result === 'string');
 }
@@ -169,6 +179,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(10, 116, 'GRID-TOKEN', 0), askingFor(20));
   await page.replyByRequest(galleryReply(2, 2, 'STRIP-TOKEN', 100), askingFor(4));
   page.win.fetchCalls.length = 0;
@@ -183,6 +194,7 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45), askingFor(20));
 
   const slots = page.api().capture()[0]?.calls[0]?.slots || [];
@@ -231,22 +243,35 @@ const photosIn = async (response) => {
 };
 
 {
+  // Private sessions come first: the fill stays off until the background says
+  // they are used up.
   const page = loadPage();
   page.switchOn();
-  t.check('fill: on by default when the photos switch is on', page.api().fillGrid() === 'on for this session');
+  t.check('fill: off by default, private sessions are tried first',
+    page.api().fillGrid().startsWith('off'));
+  const waiting = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
+  t.check('fill: while it waits the reply is the server\'s own', await photosIn(waiting) === 10);
+  t.check('fill: and no extra request is made', page.win.fetchCalls.length === 1);
+
+  page.allowFill();
+  t.check('fill: on once the background allows it', page.api().fillGrid() === 'on for this session');
+  const allowed = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
+  t.check('fill: and then it lengthens the list', await photosIn(allowed) === 20);
+
   page.api().fillGrid(false);
-  t.check('fill: fillGrid(false) turns it off', page.api().fillGrid() === 'off');
+  t.check('fill: fillGrid(false) turns it off again', page.api().fillGrid().startsWith('off'));
+  page.api().fillGrid('auto');
+  t.check('fill: fillGrid(\'auto\') goes back to waiting for the background',
+    page.api().fillGrid().startsWith('off'));
 
-  const response = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
-  t.check('fill: off, the reply is the server\'s own', await photosIn(response) === 10);
-  t.check('fill: off, no extra request is made', page.win.fetchCalls.length === 1);
-
-  const unset = loadPage();
-  t.check('fill: with the photos switch off and nothing stored, it is off', unset.api().fillGrid() === 'off');
+  const off = loadPage();
+  off.allowFill();
+  t.check('fill: allowed, but with the photos switch off it stays off', off.api().fillGrid().startsWith('off'));
 }
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.api().fillGrid(true);
   t.check('fill: turned on for the session', page.api().fillGrid() === 'on for this session');
 
@@ -272,6 +297,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.api().fillGrid(true);
 
   const response = await page.receiveByRequest([galleryReply(20, 116, 'T1', 0)], askingFor(20));
@@ -280,6 +306,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.api().fillGrid(true);
 
   const response = await page.receiveByRequest([galleryReply(10, 116, null, 0)], askingFor(20));
@@ -288,6 +315,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.api().fillGrid(true);
 
   const response = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 0)], askingFor(20));
@@ -296,6 +324,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.api().fillGrid(true);
 
   const response = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), 'garbage'], askingFor(20));
@@ -365,6 +394,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
   ], askingFor(20));
@@ -373,6 +403,7 @@ const photosIn = async (response) => {
   // A batchexecute call that is not the gallery goes through untouched.
   const other = loadPage();
   other.switchOn();
+  other.allowFill();
   const otherText = ")]}'\n\n20\n[[\"wrb.fr\",\"T4jwAf\",\"[1]\"]]\n";
   const otherResponse = await other.receiveRpc('T4jwAf', [otherText]);
   t.check('fill: a call that is not the gallery is left as it is',
@@ -380,13 +411,14 @@ const photosIn = async (response) => {
 
   const unknown = loadPage();
   unknown.api().fillGrid('nonsense');
-  t.check('fill: an unknown value turns the fill off', unknown.api().fillGrid() === 'off');
+  t.check('fill: an unknown value turns the fill off', unknown.api().fillGrid().startsWith('off'));
 }
 
 // --- GMGallery.trace() -------------------------------------------------------
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45), askingFor(20));
 
   const events = page.api().trace();
@@ -404,6 +436,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.api().fillGrid(true);
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
@@ -419,6 +452,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.api().fillGrid(true);
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
@@ -444,6 +478,7 @@ const photosIn = async (response) => {
   const make = async () => {
     const page = loadPage();
     page.switchOn();
+  page.allowFill();
     return read(await page.receiveByRequest([
       galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(10, 116, 'T3', 20)
     ], askingFor(20)));
@@ -547,6 +582,7 @@ const photosIn = async (response) => {
   };
   const read = async (replies, page = loadPage()) => {
     page.switchOn();
+  page.allowFill();
     const response = await page.receiveByRequest(replies, askingFor(20));
     const text = await response.text();
     return { page, payload: [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)]
@@ -567,6 +603,7 @@ const photosIn = async (response) => {
   // A true that an uncapped reply carries too is ordinary and stays.
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   const uncapped = JSON.parse(JSON.stringify(REPLY_CAPPED));
   uncapped[15] = null;
   uncapped[11] = true;
@@ -599,6 +636,7 @@ const photosIn = async (response) => {
   };
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   const response = await page.receiveByRequest([moved('T1'), moved('T2')], askingFor(20));
   t.check('token: a fill follows a token that moved', page.win.fetchCalls.length >= 2 && response !== undefined);
 }
@@ -611,6 +649,7 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.api().fillGrid(true);
   const response = await page.receiveByRequest([galleryReply(10, 116, 'T3', 20)], followUp);
 
@@ -624,6 +663,7 @@ const photosIn = async (response) => {
   // The first request, with no token, is still filled.
   const first = loadPage();
   first.switchOn();
+  first.allowFill();
   first.api().fillGrid(true);
   const filled = await first.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)
@@ -651,6 +691,7 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.receiveByRequest([cappedPage('T1', 0), cappedPage('T2', 10)], askingFor(20));
   page.win.fetchCalls.length = 0;
 
@@ -681,6 +722,7 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.receiveByRequest([capped(10, 112, 'T1', 0), capped(10, 112, 'T2', 10)], askingFor(20));
 
   const joined = await page.receiveByRequest([capped(10, 112, 'T3', 20), capped(10, 112, 'T4', 30)], REQUEST_2);
@@ -699,6 +741,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   const { scrollListeners } = page;
   const pane = { nodeType: 1, scrollTop: 2400, scrollHeight: 5000, clientHeight: 600,
     querySelectorAll: () => [1, 2, 3] };
@@ -727,6 +770,7 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
   const el = pane(940, 2070);
   reset(page, el);
@@ -737,6 +781,7 @@ const photosIn = async (response) => {
   // No reply was handed over: nothing of ours moved it.
   const other = loadPage();
   other.switchOn();
+  other.allowFill();
   const el2 = pane(940, 2070);
   reset(other, el2);
   t.check('restore: without a handed-over reply the position is left alone', el2.scrollTop === 58);
@@ -753,11 +798,13 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
   t.check('outcome: a lengthened list is marked as filled', page.sent('gm-roll-outcome')[0]?.filled === true);
 
   const plain = loadPage();
   plain.switchOn();
+  plain.allowFill();
   await plain.receiveByRequest([galleryReply(20, 116, 'T1', 0)], askingFor(20));
   t.check('outcome: the server\'s own list is not', plain.sent('gm-roll-outcome')[0]?.filled === false);
 }
@@ -766,6 +813,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
   // The open photo's neighbours: two photos, a total of two, no token.
   await page.receiveRpc('hspqX', [galleryReply(2, 2, null, 0)]);
@@ -782,6 +830,7 @@ const photosIn = async (response) => {
   const outcome = async (replies, request = askingFor(20)) => {
     const page = loadPage();
     page.switchOn();
+  page.allowFill();
     await page.receiveByRequest(replies, request);
     return page.sent('gm-roll-outcome');
   };
@@ -803,103 +852,11 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.api().fillGrid(false);
   await page.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
   t.check('report: with the fill off the capped reply reaches the roll',
     page.sent('gm-roll-outcome')[0]?.firstPage === 10);
-}
-
-// --- a fill that Maps does not page on ------------------------------------------
-// The list was accepted but Maps never asks for more, so the fill did not fix
-// the cap. The background is told once, and takes over with another session.
-{
-  const filledPage = async () => {
-    const page = loadPage();
-    page.switchOn();
-    await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
-    return page;
-  };
-
-  const stalled = await filledPage();
-  stalled.scroll(false);
-  await wait(3700);
-  t.check('stall: scrolled but not to the end, nothing is reported', stalled.sent('gm-fill-stalled').length === 0);
-  stalled.scroll(true);
-  await wait(3700);
-  t.check('stall: at the end with no request, the background is told once',
-    stalled.sent('gm-fill-stalled').length === 1);
-  stalled.scroll(true);
-  await wait(3700);
-  t.check('stall: and not again', stalled.sent('gm-fill-stalled').length === 1);
-
-  const paged = await filledPage();
-  paged.scroll(true);
-  await paged.replyByRequest(galleryReply(10, 116, 'T3', 20), REQUEST_2);
-  await wait(3700);
-  t.check('stall: Maps asking for the next page proves the fill worked', paged.sent('gm-fill-stalled').length === 0);
-
-  // Replies are delivered with a body that names no gallery call, so only the
-  // reply is seen by the watch and no request is there to cancel it early.
-  const deliver = (page, ...replies) => page.receiveRpc('hspqX', replies);
-  const quiet = async (page) => { page.scroll(true); await wait(3700); return page.sent('gm-fill-stalled').length; };
-
-  // The server's last page, but the list is far short of what it announced:
-  // the session is cut, so the fallback runs without waiting for a scroll.
-  const cut = await filledPage();
-  await deliver(cut, galleryReply(10, 116, 'T3', 20));
-  await deliver(cut, galleryReply(8, 116, null, 30));
-  await wait(50);
-  t.check('stall: the list ending far short of the total falls back at once',
-    cut.sent('gm-fill-stalled').length === 1);
-  t.check('stall: and says how far it got', cut.logs.some((l) => l.includes('ended at 38 of 116')));
-
-  // The same ending on a list that did reach its total is simply finished.
-  const whole = loadPage();
-  whole.switchOn();
-  await whole.receiveByRequest([galleryReply(10, 30, 'T1', 0), galleryReply(10, 30, 'T2', 10)], askingFor(20));
-  await deliver(whole, galleryReply(10, 30, null, 20));
-  await wait(50);
-  t.check('stall: a list that reached its total is not cut', whole.sent('gm-fill-stalled').length === 0);
-
-  const finishedPage = async () => {
-    const page = loadPage();
-    page.switchOn();
-    await page.receiveByRequest([galleryReply(10, 36, 'T1', 0), galleryReply(10, 36, 'T2', 10)], askingFor(20));
-    return page;
-  };
-
-  const shorter = await finishedPage();
-  await deliver(shorter, galleryReply(10, 36, 'T3', 20));
-  await deliver(shorter, galleryReply(6, 36, 'T4', 30));
-  t.check('stall: a shorter last page ends the watch quietly when the total is reached',
-    await quiet(shorter) === 0);
-
-  const empty = await finishedPage();
-  await deliver(empty, galleryReply(10, 36, 'T3', 20));
-  await deliver(empty, galleryReply(6, 36, 'T4', 30));
-  await deliver(empty, galleryReply(0, 36, null, 36));
-  t.check('stall: an empty page after the whole list ends the watch quietly', await quiet(empty) === 0);
-
-  const going = await filledPage();
-  await deliver(going, galleryReply(10, 116, 'T3', 20));
-  t.check('stall: a list that could go on and does not still falls back', await quiet(going) === 1);
-
-  // The real sequence: Maps sends each follow-up request itself, which used to
-  // switch the watch off before the end of the list could be judged.
-  const realistic = await filledPage();
-  await realistic.receiveByRequest([galleryReply(10, 116, 'T3', 20), galleryReply(10, 116, 'T4', 30)], REQUEST_2);
-  await realistic.receiveByRequest([galleryReply(10, 116, 'T5', 40), galleryReply(8, 116, null, 50)], REQUEST_2);
-  await realistic.receiveByRequest([galleryReply(0, 116, null, 60)], REQUEST_2);
-  await wait(50);
-  t.check('stall: with Maps\' own requests in between, a list cut short still falls back',
-    realistic.sent('gm-fill-stalled').length === 1);
-
-  const plain = loadPage();
-  plain.switchOn();
-  await plain.receiveByRequest([galleryReply(20, 116, 'T1', 0)], askingFor(20));
-  plain.scroll(true);
-  await wait(3700);
-  t.check('stall: a reply that was not filled is not watched', plain.sent('gm-fill-stalled').length === 0);
 }
 
 // --- switched off -----------------------------------------------------------
@@ -916,6 +873,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(10, 45), askingFor(20));
   await wait(50);
 
@@ -932,6 +890,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(10, 250000), askingFor(20));
   await wait(50);
 
@@ -944,6 +903,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(20, 45), askingFor(20));
   await wait(50);
 
@@ -958,6 +918,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(frame('hspqX', REPLY_1), REQUEST_1);
   await wait(50);
 
@@ -978,6 +939,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(frame('hspqX', REPLY_CAPPED), REQUEST_CAPPED);
   await wait(50);
 
@@ -1047,6 +1009,7 @@ const photosIn = async (response) => {
   const shared = storage();
   const page = loadPage({ localStorage: shared });
   page.switchOn();
+  page.allowFill();
   page.reply(frame('hspqX', REPLY_1), REQUEST_1);
   page.reply(frame('hspqX', REPLY_2), REQUEST_2);
   await wait(50);
@@ -1059,6 +1022,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(10, 45), askingBlind());
   await wait(50);
 
@@ -1071,6 +1035,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(10, 45), askingBatched(20));
   await wait(50);
 
@@ -1082,6 +1047,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(10, 45), 'f.req=' + encodeURIComponent('[[["hspqX",42,null]]]'));
   await wait(50);
 
@@ -1094,6 +1060,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(10, 45), askingBlind());
   page.reply(galleryReply(0, 45), askingBlind());
   await wait(50);
@@ -1109,6 +1076,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(10, 45), askingBlind());
   page.reply(galleryReply(20, 45), askingBlind());
   await wait(50);
@@ -1120,6 +1088,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(10, 45), askingBlind());
   page.reply(galleryReply(20, 45), askingBlind());
   page.reply(galleryReply(0, 45), askingBlind());
@@ -1133,6 +1102,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage({ url: 'https://www.google.com/maps/@48.86,2.35,3a,75y,90t/data=!3m7' });
   page.switchOn();
+  page.allowFill();
   page.reply(galleryReply(1, 45), askingFor(20));
   await wait(50);
 
@@ -1145,6 +1115,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.scripts.set('state', {
     textContent: 'APP_INITIALIZATION_STATE=' + JSON.stringify(
       Array.from({ length: 27 }, (_, i) => `https://lh3.googleusercontent.com/p/P${i}\\u003dw100`))
@@ -1163,6 +1134,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
+  page.allowFill();
   page.scripts.set('state', {
     textContent: 'APP_INITIALIZATION_STATE=' + JSON.stringify([
       'https://lh3.googleusercontent.com/p/SAME=w203-h152',

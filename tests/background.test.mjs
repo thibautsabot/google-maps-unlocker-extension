@@ -52,68 +52,6 @@ const photoView = 'https://www.google.com/maps/@48.86,2.35,3a,75y,90t/data=!3m7'
     !world.did.length);
 }
 
-// --- the in-page fill did not make Maps page on ------------------------------
-// The page reports an uncapped-looking list, so nothing rolls; only when Maps
-// then never asks for more is the session treated as capped.
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-roll-outcome', firstPage: 20, serverTotal: 116, asked: 20 });
-  t.check('stalled fill: a filled list alone changes no cookie and reloads nothing',
-    !world.did.some((d) => d.startsWith('cookie') || d === 'RELOAD'));
-
-  await send({ type: 'gm-fill-stalled', firstPage: 10, serverTotal: 116, asked: 20 });
-  t.check('stalled fill: the fallback reuses the saved session and reloads',
-    world.did.includes('RELOAD') && world.did.some((d) => d.startsWith('cookie')));
-  t.check('stalled fill: and says why',
-    world.did.some((d) => d.includes('in-page fill did not make Maps page on')));
-}
-{
-  const world = fakeBrowser({ features: { hours: false, photos: false } });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-fill-stalled', firstPage: 10, serverTotal: 116, asked: 20 });
-  t.check('stalled fill: with the photos switch off nothing happens', !world.did.length);
-}
-
-// --- a swap that only gets a lengthened list is a failed swap -----------------
-// The page fills a capped list itself, so after a reload it reports a whole-
-// looking list. That must not clear what was tried, and must not be called a
-// lifted cap. The next session is tried without waiting for another scroll.
-{
-  const filled = { type: 'gm-roll-outcome', firstPage: 20, serverTotal: 112, asked: 20, filled: true };
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-fill-stalled', firstPage: 10, serverTotal: 112, asked: 20 });
-  const reloadsAfterStall = world.did.filter((d) => d === 'RELOAD').length;
-  t.check('filled swap: the stall reuses the saved session first', reloadsAfterStall === 1);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(filled);
-  t.check('filled swap: it is not called a lifted cap', !world.did.some((d) => d.includes('verdict: lifted')));
-  t.check('filled swap: it is called still capped', world.did.some((d) => d.includes('verdict: still capped')));
-  t.check('filled swap: the next session is tried at once, from a private window',
-    world.did.some((d) => d.includes('borrowing a fresh session from a private window (roll 1 of 5)')));
-  t.check('filled swap: the saved session is not put back again',
-    world.did.filter((d) => d === 'cookie NID=saved-one').length === 1);
-}
-{
-  const filled = { type: 'gm-roll-outcome', firstPage: 20, serverTotal: 112, asked: 20, filled: true };
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(filled);
-  t.check('filled load: with no swap pending nothing is touched',
-    !world.did.some((d) => d.startsWith('cookie') || d === 'RELOAD' || d.startsWith('private')));
-  t.check('filled load: and it is not called uncapped', !world.did.some((d) => d.startsWith('not capped')));
-}
-
 // --- the ordinary capped page -----------------------------------------------
 {
   const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
@@ -317,19 +255,42 @@ const saved = () => savedSession([cookie('NID', 'saved-one')]);
   t.check('  and does not trigger a roll', !after.some((d) => d.startsWith('private window')));
 }
 
-// --- rolling stops ----------------------------------------------------------
+// --- rolling stops, then the page lengthens the list itself -------------------
 {
   const world = fakeBrowser({ privateSession: (n) => [cookie('NID', `private-${n}`, { storeId: '1' })] });
   const send = loadBackground(world);
 
-  for (let load = 0; load < 7; load++) {
+  for (let load = 0; load < 8; load++) {
     await send({ type: 'gm-hello', url: place });
     await send(capped);
-    }
+  }
 
   const rolls = world.did.filter((d) => d.startsWith('private window')).length;
   t.check(`rolling stops at five (rolled ${rolls})`, rolls === 5);
-  t.check('  and says it gave up', world.did.some((d) => d.includes('gave up after 5')));
+  t.check('  the page is then allowed to lengthen the list, once',
+    world.did.filter((d) => d.includes('the page will lengthen the list itself')).length === 1);
+  t.check('  and reloaded once for it', world.did.filter((d) => d === 'RELOAD').length === 6);
+  t.check('  and after that it says it gave up', world.did.some((d) => d.includes('gave up after 5')));
+}
+{
+  // Before the five are used up the page is not told anything.
+  const world = fakeBrowser({ privateSession: (n) => [cookie('NID', `private-${n}`, { storeId: '1' })] });
+  const send = loadBackground(world);
+
+  for (let load = 0; load < 3; load++) {
+    await send({ type: 'gm-hello', url: place });
+    await send(capped);
+  }
+  t.check('fill not allowed while private sessions are still being tried',
+    !world.did.some((d) => d.includes('the page will lengthen the list itself')));
+}
+{
+  // A page that is not capped never needs it.
+  const world = fakeBrowser({});
+  const send = loadBackground(world);
+  await send({ type: 'gm-hello', url: place });
+  await send({ type: 'gm-roll-outcome', firstPage: 20, serverTotal: 112, asked: 20 });
+  t.check('an uncapped page is never told to fill', !world.did.some((d) => d.includes('lengthen')));
 }
 
 // --- borrowing the same session twice ---------------------------------------

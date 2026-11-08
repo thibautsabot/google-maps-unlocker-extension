@@ -9,7 +9,6 @@
   //   the first gallery reply                            gm-roll-outcome
   //   a later page of that same gallery                  gm-gallery-paged
   //   a reply that is one open photo, not the grid       gm-gallery-idle
-  //   a filled grid that Maps then does not page on      gm-fill-stalled
   //
   // It does change one thing: a capped first reply is replaced by a longer
   // one (see filledReply), and only the background touches cookies.
@@ -35,7 +34,12 @@
     if (event.source !== window) return;
 
     const data = event.data;
-    if (!data || data.source !== 'gm-native-maps' || data.type !== 'gm-settings') return;
+    if (!data || data.source !== 'gm-native-maps') return;
+    if (data.type === 'gm-fill-allowed') {
+      try { sessionStorage.setItem(FILL_KEY, 'allowed'); } catch (_) {}
+      return;
+    }
+    if (data.type !== 'gm-settings') return;
     photosOn = !!data.features?.photos;
   });
 
@@ -297,102 +301,13 @@
     if (urls.size) notePagePhotos(urls, false);
   }
 
-  // --- a fill that Maps does not page on --------------------------------------
+  // --- the scroll position Maps resets after a reply was handed over ---------
   //
-  // After the fill, Maps should ask for the next page once the grid is
-  // scrolled to its end. If the grid sits at its end and nothing is asked for,
-  // the list was accepted but the way to more was not, which the fill cannot
-  // fix by itself. That is reported once, and the background then falls back
-  // to a private-window session. A gallery request leaving, or a reply to one,
-  // proves Maps does page and ends the watch for good.
-  // When the last reply was handed to Maps in place of the server's. Maps
-  // resets the grid's scroll position when such a reply grows the list, which
-  // the scroll watch below puts back.
+  // When the last reply was handed to Maps in place of the server's, Maps
+  // resets the grid's scroll position as the list grows. The scroll watch near
+  // the end of this file puts it back.
   let handedOverAt = -Infinity;
   const RESTORE_WINDOW_MS = 1500;
-
-  const STALL_MS = 3500;
-  // A finished list holding less than this share of the announced total is cut.
-  const SHORT_OF_TOTAL = 0.9;
-  const AT_END_PX = 80;
-  const stall = {
-    rpc: null, report: null, timer: null, watching: false, done: false,
-
-    // loaded and total let the end of the list be judged: the server's last
-    // page arriving with far fewer photos than it announced means the session
-    // is cut, and the fill alone cannot lift that.
-    loaded: 0, total: null,
-
-    arm(rpc, report, loaded = 0, total = null) {
-      if (this.done) return;
-      this.rpc = rpc;
-      this.report = report;
-      // Only the first fill sets the count. A filled follow-up arms again, and
-      // its own page is already counted by observe.
-      if (this.watching) return;
-      this.loaded = loaded;
-      this.total = total;
-      this.watching = true;
-      try { document.addEventListener('scroll', (event) => this.scrolled(event.target), true); } catch (_) {}
-    },
-
-    // A reply that came after the fill. The list having ended is not a stall:
-    // Maps rightly asks for nothing more after an empty page, one without a
-    // token, or a page shorter than the ones before it, which is how the
-    // server marks its last. Only a list that could go on and does not is.
-    biggest: 0,
-    observe(rpc, payload) {
-      if (this.done || !this.rpc || rpc !== this.rpc) return;
-      const found = describe(payload);
-      // A reply whose total is no more than its own size is a strip of photos
-      // (the open photo's neighbours), not a page of this gallery.
-      if (found && typeof found.total === 'number' && found.total <= found.size) return;
-      const size = found ? found.size : 0;
-      const ended = size === 0 || !tokenOf(rpc, payload) || (this.biggest > 0 && size < this.biggest);
-      this.biggest = Math.max(this.biggest, size);
-      this.loaded += size;
-      if (!ended) return;
-
-      const short = typeof this.total === 'number' && this.loaded < this.total * SHORT_OF_TOTAL;
-      this.finish();
-      if (!short) return;
-
-      console.warn(LOG, `fill: the list ended at ${this.loaded} of ${this.total}, so this session is cut`);
-      this.report?.();
-    },
-
-    // Maps asked for another page: it does page, so reaching the end of the
-    // grid is no longer a sign of trouble. The count goes on, though, because
-    // the list can still end short of its total.
-    paged: false,
-    proven() {
-      this.paged = true;
-      clearTimeout(this.timer);
-    },
-
-    // The watch is over: the list ended, whatever came of it.
-    finish() {
-      this.done = true;
-      clearTimeout(this.timer);
-    },
-
-    atEnd(node) {
-      const el = node && node.nodeType === 1 ? node : document.scrollingElement;
-      if (!el || !(el.scrollHeight > el.clientHeight)) return false;
-      return el.scrollHeight - el.scrollTop - el.clientHeight <= AT_END_PX;
-    },
-
-    scrolled(target) {
-      if (this.done || this.paged || !this.rpc || !this.atEnd(target)) return;
-      clearTimeout(this.timer);
-      this.timer = setTimeout(() => {
-        if (this.done) return;
-        this.done = true;
-        console.warn(LOG, 'fill: the grid reached its end and Maps asked for no further page');
-        this.report?.();
-      }, STALL_MS);
-    }
-  };
 
   // --- fetch and XHR ----------------------------------------------------------
   //
@@ -412,7 +327,6 @@
   let askedAnnounced = false;
 
   const noteAsked = (batch, body) => {
-    if (batch && stall.rpc && envelopes(body).some((entry) => entry.rpc === stall.rpc)) stall.proven();
     if (!batch || askedAnnounced || askedFor(body, { layoutFor }) === null) return;
     askedAnnounced = true;
 
@@ -420,11 +334,6 @@
   };
 
   function readReply(batch, text, requestBody, url = null) {
-    if (batch) eachGalleryCall(text, (rpc, payload) => {
-      if (single(payload)) return false;
-      stall.observe(rpc, payload);
-      return true;
-    });
     if (batch) record(text, requestBody, url);
     if (batch) onFirstGallery(text, requestBody);
     else onPlacePayload(text);
@@ -506,13 +415,19 @@
   // means on; GMGallery.fillGrid(false) turns it off for this tab's session,
   // which leaves the private-window roll as the only remedy.
   const FILL_KEY = 'gmnx.fillGrid';
+  // Borrowing a full session from a private window is tried first. This fill
+  // runs only once the background says that has been used up, and the answer
+  // is kept for the tab's session so a reload does not forget it.
+  // GMGallery.fillGrid(true) forces it on, fillGrid(false) off, and
+  // fillGrid('auto') goes back to following the background.
   const fillOn = () => {
     try {
       const value = sessionStorage.getItem(FILL_KEY);
       if (value === '1') return true;
       if (value === '0') return false;
+      if (value === 'allowed') return photosOn;
     } catch (_) {}
-    return photosOn;
+    return false;
   };
   const MAX_FILL_PAGES = 15;
 
@@ -740,19 +655,6 @@
             if (filled) {
               console.log(LOG, `fill: handing Maps a longer list (${filled.length} chars)`);
               report(filled);
-              const filledRpc = state.rpc;
-              let filledCount = 0;
-              let filledTotal = null;
-              eachGalleryCall(filled, (name, payload) => {
-                const d = single(payload) ? null : describe(payload);
-                if (!d) return false;
-                filledCount = d.size;
-                filledTotal = d.total;
-                return true;
-              });
-              stall.arm(filledRpc, () => tell({ type: 'gm-fill-stalled',
-                firstPage: state.firstPage, serverTotal: state.serverTotal, asked: state.asked,
-                galleryUrl: rememberedGalleryUrl() || location.href }), filledCount, filledTotal);
               handedOverAt = performance.now();
               return replaceResponse(res, filled);
             }
@@ -822,12 +724,17 @@
 
     forget: () => ask('gm-forget', 'asked — see the message'),
 
-    // fillGrid() reports, fillGrid(true) forces the fill on for this tab even
-    // with the photos switch off, fillGrid(false) turns it off.
+    // fillGrid() reports. true forces the in-page fill on, false turns it off,
+    // 'auto' goes back to waiting for the background to allow it.
     fillGrid: (on) => {
-      if (on === undefined) return fillOn() ? 'on for this session' : 'off';
-      try { sessionStorage.setItem(FILL_KEY, on === true ? '1' : '0'); } catch (_) { return 'could not be saved'; }
-      return on === true ? 'on for this session: reload the place, then open the Photos grid' : 'off';
+      if (on === undefined) return fillOn() ? 'on for this session' : 'off (waiting for the private-session tries to run out)';
+      const value = on === true ? '1' : (on === 'auto' ? null : '0');
+      try {
+        if (value === null) sessionStorage.removeItem(FILL_KEY);
+        else sessionStorage.setItem(FILL_KEY, value);
+      } catch (_) { return 'could not be saved'; }
+      return on === true ? 'on for this session: reload the place, then open the Photos grid'
+        : (on === 'auto' ? 'back to waiting for the private-session tries to run out' : 'off');
     },
 
     // The shape of each gallery request and reply seen on this page, with no

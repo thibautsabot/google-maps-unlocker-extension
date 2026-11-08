@@ -71,7 +71,7 @@ window.addEventListener('message', (event) => {
 
   const data = event.data;
   if (!data || data.source !== 'gm-native-maps') return;
-  if (!['gm-roll-outcome', 'gm-gallery-asking', 'gm-gallery-idle', 'gm-gallery-paged', 'gm-fill-stalled',
+  if (!['gm-roll-outcome', 'gm-gallery-asking', 'gm-gallery-idle', 'gm-gallery-paged',
        'gm-page-photos', 'gm-borrow-private', 'gm-forget', 'gm-reviews-state'].includes(data.type)) return;
 
   const { source, ...payload } = data;
@@ -79,6 +79,10 @@ window.addEventListener('message', (event) => {
 }, false);
 
 browser.runtime.onMessage.addListener((msg) => {
+  if (msg?.type === 'gm-fill-allowed') {
+    try { window.postMessage({ source: 'gm-native-maps', type: 'gm-fill-allowed' }, location.origin); } catch (_) {}
+    return;
+  }
   if (msg?.type !== 'gm-roll-log') return;
 
   console.log(LOG, msg.text);

@@ -327,6 +327,9 @@ export function loadPage({
     switchOn: () => win.postMessage({
       source: 'gm-native-maps', type: 'gm-settings', features: { photos: true, hours: true }
     }),
+    // The background saying the private-session tries are used up, so the
+    // page may lengthen a capped list itself.
+    allowFill: () => win.postMessage({ source: 'gm-native-maps', type: 'gm-fill-allowed' }),
     // Delivers a reply the way Maps does, over XHR.
     reply: (text, body) => {
       const xhr = new win.XMLHttpRequest();

@@ -29,25 +29,26 @@ session, and the session decides how much you see. A **full session** shows
 everything. A **limited session** shows only 10 photos, then stops.
 
 **What it does, in order.**
-1. **Fills the gallery in the page.** When the first photo page comes back
-   capped, the extension asks Google for the next pages itself, using the
-   token Google already sent, merges them, and hands Maps the longer list.
-   Maps then keeps paging as you scroll. No reload, no cookie touched. The
-   token and the "limited" flag are found by their shape in Google's reply
-   rather than by fixed position, so small layout changes do not break it. Pages
-   Maps asks for on its own are left alone.
-2. **Falls back to a full session.** If the fill fails, or Maps does not
-   page on after it, it borrows a full session from a private window and
-   reloads the tab. It checks the gallery
-   again and tries another session if needed, up to five times. A full
-   session that works is remembered.
+1. **Borrows a full session.** When the first photo page comes back capped,
+   it borrows a session from a private window and reloads the tab. It checks
+   the gallery again and tries another session if needed, up to five times.
+   A full session that works is remembered.
+2. **Lengthens the list in the page.** If all five sessions are capped, the
+   tab reloads once more and the extension asks Google for the next pages
+   itself, using the token Google already sent, merges them, and hands Maps
+   the longer list. Maps keeps paging as you scroll. No further reload, and
+   no cookie is touched. The token and the "limited" flag are found by their
+   shape in Google's reply rather than by fixed position, so small layout
+   changes do not break it. In practice a limited session still stops at
+   about half of a large place's photos.
 
 **What to expect.**
-- Step 1 is silent. Step 2 reloads the tab, sometimes more than once.
-- Some places stay limited whoever asks. It stops after five tries instead of
+- Step 1 reloads the tab, sometimes several times, and Google may ask about
+  cookies again after each one. Step 2 happens once, after the fifth.
+- Some places stay limited whoever asks. After step 2 it stops instead of
   reloading forever.
 
-Only step 2 changes cookies. The toolbar asks you to agree first. It reads
+Only step 1 changes cookies. The toolbar asks you to agree first. It reads
 and replaces Google cookies, and saves a working set locally for reuse. This
 signs you out of Google in that browser. Turn the switch off to withdraw
 consent; turning it on again asks again.

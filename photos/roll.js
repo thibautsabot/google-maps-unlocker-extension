@@ -136,6 +136,9 @@ async function act(capped, msg, tabId, why) {
 const MAX_ROLLS = 5;
 const rolls = new Map();
 const tried = new Map();
+// Tabs whose page has been told to lengthen a capped list itself, because the
+// private sessions were used up. Once per tab.
+const fillAllowed = new Set();
 
 // Which kinds of session this tab has already tried. A missing entry is
 // "none yet", not a reason to skip the saved cookies.
@@ -185,6 +188,16 @@ async function lift(msg, tabId) {
   // capped whoever asks, so this stops rather than reloading the tab for ever.
   const spent = rolls.get(tabId) || 0;
   if (spent >= MAX_ROLLS) {
+    // Every session was capped, so the page is asked to lengthen the list
+    // itself. Once, so a fill that does not work cannot reload the tab again.
+    if (!fillAllowed.has(tabId)) {
+      fillAllowed.add(tabId);
+      await say(tabId, `${spent} fresh sessions were all capped, so the page will lengthen the list itself`);
+      try { await browser.tabs.sendMessage(tabId, { type: 'gm-fill-allowed' }); } catch (_) {}
+      await reload(tabId);
+      return;
+    }
+
     say(tabId, `gave up after ${spent} fresh sessions, all capped.`
       + ' GMGallery.borrowPrivate() will roll again if you want to keep going');
     return;
@@ -335,25 +348,19 @@ async function onForget(msg, tabId) {
 // By hand means starting over, not inheriting a tab that has already spent
 // its five.
 async function onManualBorrow(msg, tabId) {
+  fillAllowed.delete(tabId);
   rolls.delete(tabId);
   tried.delete(tabId);
   return onBorrowPrivate(msg, tabId);
 }
 
 handles('photos', 'gm-roll-outcome', onOutcome);
-// The in-page fill gave Maps a longer list and Maps never asked for more, so
-// the session is as good as capped. The private-window roll takes over.
-async function onFillStalled(msg, tabId) {
-  await say(tabId, 'the in-page fill did not make Maps page on, so falling back to another session');
-  await act(true, msg, tabId, 'the fill did not make Maps page on');
-}
-
 handles('photos', 'gm-gallery-paged', onPaged);
-handles('photos', 'gm-fill-stalled', onFillStalled);
 handles('photos', 'gm-forget', onForget);
 handles('photos', 'gm-borrow-private', onManualBorrow);
 
 onTabGone((tabId) => {
+  fillAllowed.delete(tabId);
   tried.delete(tabId);
   rolls.delete(tabId);
   stopWaitingForPage(tabId);
