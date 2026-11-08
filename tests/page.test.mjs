@@ -719,6 +719,36 @@ const photosIn = async (response) => {
     page.api().trace().filter((e) => e.kind === 'scroll-jump').length === 1);
 }
 
+// --- the scroll position Maps resets after a handed-over reply is put back ------
+{
+  const pane = (top, height) => ({ nodeType: 1, scrollTop: top, scrollHeight: height, clientHeight: 600,
+    querySelectorAll: () => [] });
+  const reset = (page, el) => { page.scrollEvent(el); el.scrollTop = 58; el.scrollHeight = 3989; page.scrollEvent(el); };
+
+  const page = loadPage();
+  page.switchOn();
+  await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
+  const el = pane(940, 2070);
+  reset(page, el);
+  t.check('restore: the position Maps reset is put back', el.scrollTop === 940);
+  t.check('restore: and it is traced', page.api().trace().some((e) => e.kind === 'scroll-restored'));
+  t.check('restore: and not recorded as a jump', !page.api().trace().some((e) => e.kind === 'scroll-jump'));
+
+  // No reply was handed over: nothing of ours moved it.
+  const other = loadPage();
+  other.switchOn();
+  const el2 = pane(940, 2070);
+  reset(other, el2);
+  t.check('restore: without a handed-over reply the position is left alone', el2.scrollTop === 58);
+
+  // A height that did not grow is not Maps appending.
+  const el3 = pane(940, 2070);
+  page.scrollEvent(el3);
+  el3.scrollTop = 58;
+  page.scrollEvent(el3);
+  t.check('restore: a fall with no growth is left alone', el3.scrollTop === 58);
+}
+
 // --- what the background is told, and the private-window fallback ---------------
 // A filled list that reaches the page size is reported as served in full, so
 // no private window opens. A capped reply that could not be filled is reported

@@ -303,6 +303,12 @@
   // fix by itself. That is reported once, and the background then falls back
   // to a private-window session. A gallery request leaving, or a reply to one,
   // proves Maps does page and ends the watch for good.
+  // When the last reply was handed to Maps in place of the server's. Maps
+  // resets the grid's scroll position when such a reply grows the list, which
+  // the scroll watch below puts back.
+  let handedOverAt = -Infinity;
+  const RESTORE_WINDOW_MS = 1500;
+
   const STALL_MS = 3500;
   // A finished list holding less than this share of the announced total is cut.
   const SHORT_OF_TOTAL = 0.9;
@@ -735,6 +741,7 @@
               stall.arm(filledRpc, () => tell({ type: 'gm-fill-stalled',
                 firstPage: state.firstPage, serverTotal: state.serverTotal, asked: state.asked,
                 galleryUrl: rememberedGalleryUrl() || location.href }), filledCount, filledTotal);
+              handedOverAt = performance.now();
               return replaceResponse(res, filled);
             }
           } finally {
@@ -1040,6 +1047,18 @@
     const was = lastScroll.get(el);
     lastScroll.set(el, now);
     if (!was || was.top - now.top < JUMP_PX) return;
+
+    // A fall in the same step that the pane grew, soon after a reply handed
+    // over: Maps appended the photos and reset the position. The position it
+    // had is put back. A user dragging the scrollbar changes no height.
+    const grew = now.height > was.height;
+    const soon = performance.now() - handedOverAt < RESTORE_WINDOW_MS;
+    if (grew && soon) {
+      try { el.scrollTop = was.top; } catch (_) {}
+      lastScroll.set(el, { top: was.top, height: now.height });
+      trace('scroll-restored', { from: now.top, to: was.top, heightBefore: was.height, heightAfter: now.height });
+      return;
+    }
 
     trace('scroll-jump', {
       from: was.top, to: now.top, heightBefore: was.height, heightAfter: now.height,
