@@ -154,7 +154,7 @@ function markTried(tabId, kind) {
 // Puts the saved cookies back and reloads. The on-screen note waits until
 // verdict.js says the reload actually lifted the cap.
 async function applySaved(saved, tabId) {
-  const written = await swapTo(saved.cookies);
+  const written = await swapTo(saved.cookies, tabId);
 
   pending.set(tabId, { kind: 'saved', cookies: saved.cookies,
     text: 'Reused the session saved earlier to lift Google’s photo and review limits.' });
@@ -316,7 +316,7 @@ async function onBorrowPrivate(msg, tabId) {
   }
 
   // Ours go first, so what remains is the private set rather than a mixture.
-  const written = await swapTo(source);
+  const written = await swapTo(source, tabId);
   await keepGoodRoll(source);
 
   pending.set(tabId, { kind: 'borrowed', cookies: source,

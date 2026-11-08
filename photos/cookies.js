@@ -89,13 +89,25 @@ const CONSENT_COOKIES = new Set(['SOCS', 'CONSENT']);
 
 // Replaces this window's Google cookies with the given set, then puts the
 // consent cookies back. Returns how many of the new set were written.
-async function swapTo(cookies) {
+async function swapTo(cookies, tabId = null) {
   const consent = (await ourGoogleCookies()).filter((c) => CONSENT_COOKIES.has(c.name));
 
   await clearOurGoogleCookies();
   const written = await writeCookies(cookies);
 
   if (consent.length) await writeCookies(consent);
+
+  // Names and lengths only, never values: which consent cookies the jar had,
+  // which the borrowed set carried, and which the jar holds now. A banner that
+  // comes back after a swap shows up here as a name that went missing.
+  if (tabId !== null) {
+    const names = (list) => [...new Set(list.map((c) => c.name))].sort().join(',') || 'none';
+    const consentOf = (list) => list.filter((c) => CONSENT_COOKIES.has(c.name))
+      .map((c) => `${c.name}(${String(c.value).length})`).join(',') || 'none';
+    const after = await ourGoogleCookies();
+    await say(tabId, `consent cookies: jar had ${consentOf(consent)}, borrowed set carried ${consentOf(cookies)},`
+      + ` jar now holds ${consentOf(after)}; all cookies now: ${names(after)}`);
+  }
   return written;
 }
 

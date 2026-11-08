@@ -323,6 +323,9 @@ const saved = () => savedSession([cookie('NID', 'saved-one')]);
     jar.find((c) => c.name === 'SOCS')?.value === 'consent-given');
   t.check('  and the borrowed session still lands',
     jar.find((c) => c.name === 'NID')?.value === 'fresh');
+  t.check('  and the log names the consent cookies without their values',
+    world.did.some((d) => d.includes('consent cookies: jar had SOCS(13)') && d.includes('jar now holds SOCS(13)'))
+    && !world.did.filter((d) => d.startsWith('log:')).some((d) => d.includes('consent-given')));
 }
 
 // --- the tab is on a photo when the swap happens ----------------------------
