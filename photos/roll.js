@@ -12,7 +12,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 //
 // If it is capped, which session next? Cheapest first, each once per tab.
 //   1. the cookies saved from a session that worked before
-//   2. a fresh private window, up to five times
+//   2. a fresh private window, up to six times
 //
 // An uncapped session never asks for the gallery, so a gallery reply at all,
 // during a swap, means that swap did not work.
@@ -133,7 +133,7 @@ async function act(capped, msg, tabId, why) {
 
 // --- which session to try next ----------------------------------------------
 
-const MAX_ROLLS = 5;
+const MAX_ROLLS = 6;
 const rolls = new Map();
 const tried = new Map();
 // Tabs whose page has been told to lengthen a capped list itself, because the
@@ -264,7 +264,7 @@ async function closeWindow(opened) {
 }
 
 // Copies a private session into this tab and reloads. Returns false when
-// nothing new was swapped in, so the attempt is not counted against the five.
+// nothing new was swapped in, so the attempt is not counted against the six.
 async function onBorrowPrivate(msg, tabId) {
   try {
     if (browser.extension?.isAllowedIncognitoAccess
@@ -346,7 +346,7 @@ async function onForget(msg, tabId) {
 }
 
 // By hand means starting over, not inheriting a tab that has already spent
-// its five.
+// its six.
 async function onManualBorrow(msg, tabId) {
   fillAllowed.delete(tabId);
   rolls.delete(tabId);

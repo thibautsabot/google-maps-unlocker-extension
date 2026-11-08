@@ -12,9 +12,10 @@ const FEATURES = [
   {
     id: 'photos',
     label: 'Full photos and reviews',
-    note: "Lifts Google's photo cap and one-page review limit by borrowing "
-      + 'a private session. Signs you out of Google in this browser, swaps '
-      + 'your Google cookies and reloads the tab.'
+    note: 'Shows more photos. Borrows a session from a private window and '
+      + 'reloads the tab, up to six times. If Google still limits it, the '
+      + 'list is lengthened in the page instead. Replaces your Google '
+      + 'cookies and signs you out of Google in this browser.'
   }
 ];
 

@@ -31,9 +31,9 @@ everything. A **limited session** shows only 10 photos, then stops.
 **What it does, in order.**
 1. **Borrows a full session.** When the first photo page comes back capped,
    it borrows a session from a private window and reloads the tab. It checks
-   the gallery again and tries another session if needed, up to five times.
+   the gallery again and tries another session if needed, up to six times.
    A full session that works is remembered.
-2. **Lengthens the list in the page.** If all five sessions are capped, the
+2. **Lengthens the list in the page.** If all six sessions are capped, the
    tab reloads once more and the extension asks Google for the next pages
    itself, using the token Google already sent, merges them, and hands Maps
    the longer list. Maps keeps paging as you scroll. No further reload, and
@@ -44,7 +44,7 @@ everything. A **limited session** shows only 10 photos, then stops.
 
 **What to expect.**
 - Step 1 reloads the tab, sometimes several times, and Google may ask about
-  cookies again after each one. Step 2 happens once, after the fifth.
+  cookies again after each one. Step 2 happens once, after the sixth.
 - Some places stay limited whoever asks. After step 2 it stops instead of
   reloading forever.
 

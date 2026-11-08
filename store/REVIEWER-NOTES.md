@@ -22,7 +22,7 @@ session. Some sessions are given a short page with no way to ask for the next
 one. The "Full photos and reviews" switch copies the cookies from a
 private-window session into the normal browser session and reloads the tab.
 It then checks whether the page is now complete, and tries another session if
-not (at most five times). If all five are limited, the page asks Google for
+not (at most six times). If all six are limited, the page asks Google for
 the next photo pages itself, using the continuation token Google already
 sent, and gives Maps the longer list. No cookie is involved in that last step.
 

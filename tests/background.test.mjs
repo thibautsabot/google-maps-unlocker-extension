@@ -260,20 +260,20 @@ const saved = () => savedSession([cookie('NID', 'saved-one')]);
   const world = fakeBrowser({ privateSession: (n) => [cookie('NID', `private-${n}`, { storeId: '1' })] });
   const send = loadBackground(world);
 
-  for (let load = 0; load < 8; load++) {
+  for (let load = 0; load < 9; load++) {
     await send({ type: 'gm-hello', url: place });
     await send(capped);
   }
 
   const rolls = world.did.filter((d) => d.startsWith('private window')).length;
-  t.check(`rolling stops at five (rolled ${rolls})`, rolls === 5);
+  t.check(`rolling stops at six (rolled ${rolls})`, rolls === 6);
   t.check('  the page is then allowed to lengthen the list, once',
     world.did.filter((d) => d.includes('the page will lengthen the list itself')).length === 1);
-  t.check('  and reloaded once for it', world.did.filter((d) => d === 'RELOAD').length === 6);
-  t.check('  and after that it says it gave up', world.did.some((d) => d.includes('gave up after 5')));
+  t.check('  and reloaded once for it', world.did.filter((d) => d === 'RELOAD').length === 7);
+  t.check('  and after that it says it gave up', world.did.some((d) => d.includes('gave up after 6')));
 }
 {
-  // Before the five are used up the page is not told anything.
+  // Before the six are used up the page is not told anything.
   const world = fakeBrowser({ privateSession: (n) => [cookie('NID', `private-${n}`, { storeId: '1' })] });
   const send = loadBackground(world);
 
