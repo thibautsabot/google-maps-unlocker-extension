@@ -621,6 +621,7 @@
           }
         }
         for (const index of stuck) merged.payload[index] = null;
+        trace('follow-up', { own: own.size, joined: merged.added, handedOver: own.size + merged.added });
         console.log(LOG, `fill: follow-up page, cleared the limited flag at [${stuck.join(', ')}]`
           + (merged.added ? `, and joined the next page: ${own.size} photos became ${own.size + merged.added}` : ''));
         return frameReply(rpc, merged.payload, text);
@@ -1025,6 +1026,26 @@
 
   window.addEventListener('unhandledrejection', (event) => {
     trace('rejection', { message: String(event.reason?.message || event.reason || '').slice(0, 160) });
+  }, true);
+
+  // A scroll position that falls a long way in one step, with the pane's
+  // height before and after. A height that shrinks means the list was rebuilt;
+  // a height that holds means something moved the scroll. Positions only.
+  const lastScroll = new WeakMap();
+  const JUMP_PX = 600;
+  document.addEventListener('scroll', (event) => {
+    const el = event.target && event.target.nodeType === 1 ? event.target : null;
+    if (!el) return;
+    const now = { top: Math.round(el.scrollTop), height: Math.round(el.scrollHeight) };
+    const was = lastScroll.get(el);
+    lastScroll.set(el, now);
+    if (!was || was.top - now.top < JUMP_PX) return;
+
+    trace('scroll-jump', {
+      from: was.top, to: now.top, heightBefore: was.height, heightAfter: now.height,
+      rebuilt: now.height < was.height,
+      tiles: el.querySelectorAll ? el.querySelectorAll('[style*="top"][style*="left"]').length : null
+    });
   }, true);
 
   document.addEventListener('click', (event) => {

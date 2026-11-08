@@ -695,6 +695,30 @@ const photosIn = async (response) => {
   t.check('follow-up: the last page is left as it is', (await sizeOf(last)).size === 8 && page.win.fetchCalls.length === 1);
 }
 
+// --- a jump of the scroll position is recorded in the trace ----------------------
+{
+  const page = loadPage();
+  page.switchOn();
+  const { scrollListeners } = page;
+  const pane = { nodeType: 1, scrollTop: 2400, scrollHeight: 5000, clientHeight: 600,
+    querySelectorAll: () => [1, 2, 3] };
+  page.scrollEvent(pane);
+  pane.scrollTop = 0;
+  pane.scrollHeight = 1800;
+  page.scrollEvent(pane);
+  const jump = page.api().trace().find((e) => e.kind === 'scroll-jump');
+  t.check('trace: a fall from 2400 to 0 is recorded', jump?.from === 2400 && jump?.to === 0);
+  t.check('trace: with the height before and after', jump?.heightBefore === 5000 && jump?.heightAfter === 1800);
+  t.check('trace: and whether the list was rebuilt', jump?.rebuilt === true);
+
+  const small = { nodeType: 1, scrollTop: 300, scrollHeight: 5000, clientHeight: 600, querySelectorAll: () => [] };
+  page.scrollEvent(small);
+  small.scrollTop = 100;
+  page.scrollEvent(small);
+  t.check('trace: an ordinary scroll back up is not a jump',
+    page.api().trace().filter((e) => e.kind === 'scroll-jump').length === 1);
+}
+
 // --- what the background is told, and the private-window fallback ---------------
 // A filled list that reaches the page size is reported as served in full, so
 // no private window opens. A capped reply that could not be filled is reported

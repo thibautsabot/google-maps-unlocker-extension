@@ -380,6 +380,7 @@ export function loadPage({
       await wait(20);
     },
     // The grid scrolled to its end (or not), as a scroll event on a pane.
+    scrollEvent: (pane) => { for (const fn of scrollListeners) fn({ target: pane }); },
     scroll: (atEnd = true) => {
       const pane = { nodeType: 1, scrollHeight: 1000, clientHeight: 400, scrollTop: atEnd ? 600 : 0 };
       for (const fn of scrollListeners) fn({ target: pane });
