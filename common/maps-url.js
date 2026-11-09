@@ -4,7 +4,8 @@ function isGoogleMapsUrl(value) {
     const url = new URL(value);
     const googleHost = /^(?:[a-z0-9-]+\.)*google\.(?:[a-z]{2,3}|[a-z]{2,3}\.[a-z]{2,3}|cat)$/i;
     return url.protocol === 'https:' && googleHost.test(url.hostname)
-      && /^\/maps(?:\/|$)/i.test(url.pathname);
+      // Content scripts match /maps/*, not bare /maps or /Maps/.
+      && url.pathname.startsWith('/maps/');
   } catch (_) {
     return false;
   }

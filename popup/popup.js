@@ -1,31 +1,31 @@
 // One switch per entry in common/features.js. Nothing here names a feature.
-//
-//   build the checkbox
-//   on change, save it and describe what that means for the open tab
-//   offer a reload after any change, when the open tab is Maps
-
 const panel = document.getElementById('features');
 const note = document.getElementById('note');
 const reload = document.getElementById('reload');
-
-// The switches as stored, with every missing one treated as off.
-const read = async () => {
-  const stored = await browser.storage.local.get(FEATURES_KEY);
-  return { ...FEATURES_OFF, ...stored[FEATURES_KEY] };
-};
-
+const PENDING_KEY = 'reloadPending';
 const boxes = new Map();
+let features;
+let tab;
+let waiting = false;
+
+// Serialize changes in this popup, capturing each click before any await.
+// Storage's map updates are still not atomic across extension contexts.
+function enqueue(task) {
+  queue = queue.then(task).catch(() => {
+    note.textContent = 'Could not save settings. Try again.';
+  });
+  return queue;
+}
 
 for (const feature of FEATURES) {
   const label = document.createElement('label');
-
   const box = document.createElement('input');
   box.type = 'checkbox';
   box.id = feature.id;
+  box.disabled = true;
 
   const name = document.createElement('span');
   name.textContent = feature.label;
-
   const detail = document.createElement('small');
   detail.textContent = feature.note;
 
@@ -33,87 +33,77 @@ for (const feature of FEATURES) {
   panel.append(label);
   boxes.set(feature.id, box);
 
-  box.addEventListener('change', async () => {
-    await browser.storage.local.set({ [FEATURES_KEY]: { ...await read(), [feature.id]: box.checked } });
-    await show(feature);
+  box.addEventListener('change', () => {
+    const checked = box.checked;
+    return enqueue(async () => {
+      const next = { ...features, [feature.id]: checked };
+      await browser.storage.local.set({ [FEATURES_KEY]: next });
+      features = next;
+
+      if (isGoogleMapsUrl(tab?.url || '') && tab?.id != null) {
+        const all = await pendingTabs();
+        all[tab.id] = true;
+        await browser.storage.local.set({ [PENDING_KEY]: all });
+        waiting = true;
+      }
+      show();
+    });
   });
 }
 
-// The tab the panel was opened from. The panel is tied to a window, so
-// "current" is that window's active tab.
-async function currentTab() {
-  const [tab] = await browser.tabs.query({ active: true, currentWindow: true });
-  return tab;
-}
-
-const PENDING_KEY = 'reloadPending';
-
 const pendingTabs = async () => (await browser.storage.local.get(PENDING_KEY))[PENDING_KEY] || {};
 
-async function markPending(tab) {
-  if (!tab?.id) return;
-  const all = await pendingTabs();
-  all[tab.id] = tab.url;
-  await browser.storage.local.set({ [PENDING_KEY]: all });
+// Pending reloads take precedence even when the last switch was turned off.
+function show() {
+  const on = FEATURES.some((feature) => features[feature.id]);
+  note.textContent = waiting
+    ? `${on ? '' : 'All features off. '}Reload the Maps tab to apply.`
+    : (on ? 'Ready.' : 'All features off.');
+  reload.hidden = !waiting;
 }
 
-async function clearPending(tabId) {
-  const all = await pendingTabs();
-  if (!(tabId in all)) return;
-  delete all[tabId];
-  await browser.storage.local.set({ [PENDING_KEY]: all });
-}
+reload.onclick = () => {
+  if (reload.disabled || !waiting) return;
+  reload.disabled = true;
+  for (const box of boxes.values()) box.disabled = true;
+  return enqueue(async () => {
+    try {
+      await browser.tabs.reload(tab.id);
+      // Failed reloads must leave the stored prompt available for retry.
+      const all = await pendingTabs();
+      if (tab.id in all) {
+        delete all[tab.id];
+        await browser.storage.local.set({ [PENDING_KEY]: all });
+      }
+      waiting = false;
+      show();
+      window.close();
+    } catch (_) {
+      note.textContent = 'Could not reload the Maps tab. Try again.';
+    } finally {
+      reload.disabled = false;
+      for (const box of boxes.values()) box.disabled = false;
+    }
+  });
+};
 
-// Shows the reload button after any switch is changed, when the open tab is
-// a Maps page, and keeps showing it until that tab has been reloaded.
-// Anywhere else the button would reload a page the extension does not run on.
-async function offerReload(changed) {
-  const tab = await currentTab();
-  const onMaps = isGoogleMapsUrl(tab?.url || '');
-
-  if (changed && onMaps) await markPending(tab);
-
-  const waiting = onMaps && tab?.id in await pendingTabs();
-  if (!waiting) {
-    reload.hidden = true;
-    return;
+async function initialize() {
+  const [stored, tabs] = await Promise.all([
+    browser.storage.local.get([FEATURES_KEY, PENDING_KEY]),
+    browser.tabs.query({ active: true, currentWindow: true })
+  ]);
+  features = { ...FEATURES_OFF, ...stored[FEATURES_KEY] };
+  [tab] = tabs;
+  waiting = isGoogleMapsUrl(tab?.url || '') && tab?.id != null
+    && tab.id in (stored[PENDING_KEY] || {});
+  for (const [id, box] of boxes) {
+    box.checked = !!features[id];
+    box.disabled = false;
   }
-
-  reload.hidden = false;
-  reload.onclick = async () => {
-    await clearPending(tab.id);
-    await browser.tabs.reload(tab.id);
-    window.close();
-  };
+  show();
 }
 
-// The status line under the switches. changed is the feature just toggled,
-// or nothing when the panel is merely opening.
-async function describe(features, changed) {
-  const on = FEATURES.filter((f) => features[f.id]);
-
-  if (!on.length) {
-    note.textContent = 'All off — the extension does nothing at all.';
-    return;
-  }
-
-  const waiting = (await pendingTabs());
-  const current = await currentTab();
-  note.textContent = changed || (current?.id in waiting)
-    ? 'Reload the Maps tab to apply.'
-    : 'Ready.';
-}
-
-// Syncs the switches and the reload affordance.
-async function show(changed) {
-  const features = await read();
-
-  for (const [id, box] of boxes) box.checked = !!features[id];
-
-  await describe(features, changed);
-  await offerReload(changed);
-}
-
+let queue = initialize().catch(() => {
+  note.textContent = 'Could not load settings. Reopen this popup.';
+});
 document.getElementById('version').textContent = `v${browser.runtime.getManifest().version}`;
-
-show();

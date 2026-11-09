@@ -29,16 +29,12 @@ function send(message, attempt = 0) {
         return;
       }
 
-      console.warn(LOG, `the background script did not take ${message.type}:`, reason);
+      console.warn(LOG, `${message.type} failed: ${reason}`);
     });
   } catch (error) {
-    console.warn(LOG, `could not reach the background script with ${message.type}:`, error);
+    console.warn(LOG, `${message.type} failed: ${error?.message || String(error)}`);
   }
 }
-
-try {
-  console.log(LOG, `relay ready, extension ${browser.runtime.getManifest().version}`);
-} catch (_) {}
 
 // Hands the page the feature switches. The page world cannot read extension
 // storage, so it is read here — and handed over again when the popup changes
@@ -50,20 +46,23 @@ function publishFeatures(features) {
   } catch (_) {}
 }
 
+let settingsRevision = 0;
 async function publishStoredFeatures() {
+  const revision = ++settingsRevision;
   const stored = await browser.storage.local.get(FEATURES_KEY);
-  publishFeatures({ ...FEATURES_OFF, ...stored[FEATURES_KEY] });
+  // An earlier read may finish after a newer storage-change read.
+  if (revision === settingsRevision) publishFeatures({ ...FEATURES_OFF, ...stored[FEATURES_KEY] });
 }
 
 publishStoredFeatures()
-  .catch((error) => console.warn(LOG, 'could not read which switches are on', error));
+  .catch((error) => console.warn(LOG, `settings failed: ${error?.message || String(error)}`));
 
 browser.storage.onChanged.addListener((changes, area) => {
   if (area !== 'local' || !changes[FEATURES_KEY]) return;
   publishStoredFeatures()
-    .catch((error) => console.warn(LOG, 'could not update which switches are on', error));
+    .catch((error) => console.warn(LOG, `settings failed: ${error?.message || String(error)}`));
 });
 
 // Tells the background this tab has loaded, which clears the popup's reload
 // prompt for it.
-send({ type: 'gm-hello', url: location.href });
+send({ type: 'gm-hello' });

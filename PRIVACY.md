@@ -17,15 +17,16 @@ The extension reads and writes no cookie.
 - **Your settings.** Which switches are on is kept in your browser's local
   extension storage. It never leaves your device.
 - **Photo galleries.** When Google marks a gallery as limited, the extension
-  asks Google for the next pages using the token Google already sent, and
-  gives Maps the longer list. These are ordinary Maps requests to Google. No
+  replays its request in batches of 10, follows Google's continuation tokens,
+  and gives Maps the merged list. These are ordinary Maps requests to Google. No
   cookie is read, written or saved, and the extension has no cookie permission.
 
 ## What leaves your device
 
-The extension makes requests only to Google: Maps' normal requests, plus one
-fetch of Google's own Maps script so it can read the page's wording. It
-contacts no other server, and does not send user data to the extension
+The extension makes requests only to Google: photo-page replays, opening-hours
+retries, and fetches of matching Maps JavaScript bundles for script discovery.
+Discovery may fetch multiple bundles and can run while feature switches are off.
+It contacts no other server, and does not send user data to the extension
 developer or any third party.
 
 ## Contact

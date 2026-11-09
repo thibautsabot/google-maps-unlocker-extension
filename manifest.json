@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Unlocker — for Google Maps™",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "description": "Unlock full hours, review search and filters, and photo galleries on Google Maps. Toggle each feature separately.",
   "action": {
     "default_title": "Unlocker",
@@ -217,9 +217,6 @@
   ],
   "background": {
     "scripts": [
-      "common/features.js",
-      "common/registry.js",
-      "common/log.js",
       "common/reload.js",
       "common/dispatch.js"
     ],

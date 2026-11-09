@@ -3,9 +3,6 @@
 // the namespace shim first so browser.* exists before anything uses it.
 importScripts(
   'common/compat.js',
-  'common/features.js',
-  'common/registry.js',
-  'common/log.js',
   'common/reload.js',
   'common/dispatch.js'
 );

@@ -141,9 +141,9 @@
       event.stopImmediatePropagation();
 
       const open = !hoursAreOpen();
-      setHoursOpen(table, open);
+      const changed = setHoursOpen(table, open);
       toggle.setAttribute('aria-expanded', String(open));
-      console.debug(LOG, open ? 'opened hours' : 'closed hours');
+      console.log(LOG, `hours ${open ? 'open' : 'close'} ${changed ? 'ok' : 'unchanged'} nodes=${changed}`);
     }, true);
   }
 

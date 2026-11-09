@@ -1,38 +1,21 @@
-// Looks the message up, checks the switch, and runs the handler. An unknown
-// type and a switched-off feature are both silence.
-async function handle(msg, tabId) {
-  const entry = HANDLERS.get(msg.type);
-  if (!entry) return;
-
-  if (entry.feature && !await featureOn(entry.feature)) return;
-
-  await entry.fn(msg, tabId);
-}
-
+// The background only clears manual reload prompts and obsolete storage.
 browser.runtime.onMessage.addListener((msg, sender) => {
-  if (msg?.type) void handle(msg, sender.tab?.id);
+  if (msg?.type === 'gm-hello' && sender?.tab?.id != null) {
+    void forgetReloadPending(sender.tab.id);
+  }
   return undefined;
 });
 
-// Logs which switches are on, then lets each feature say whatever it wants
-// said at startup. Runs when the extension is installed and when the
-// browser starts.
-async function announceReady() {
-  const features = Object.fromEntries(await Promise.all(
-    FEATURES.map(async ({ id }) => [id, await featureOn(id)])
-  ));
-  const on = FEATURES.filter((f) => features[f.id]).map((f) => f.id);
+browser.tabs.onRemoved.addListener((tabId) => { void forgetReloadPending(tabId); });
 
-  console.log(LOG, on.length
-    ? `ready — ${on.join(' and ')} switched on`
-    : 'ready — everything switched off, doing nothing until the toolbar says otherwise');
-
-  for (const report of READY) await report(features);
+async function clearLegacyStorage() {
+  // Remove records left by private-session borrowing without touching cookies.
+  try {
+    await browser.storage.local.remove(['goodRoll', 'cookieConsentGoogleSessionSwap']);
+  } catch (error) {
+    console.warn('[GM]', `storage cleanup failed: ${error?.message || String(error)}`);
+  }
 }
 
-browser.tabs.onRemoved.addListener((tabId) => {
-  for (const forget of TAB_GONE) forget(tabId);
-});
-
-browser.runtime.onInstalled.addListener(announceReady);
-browser.runtime.onStartup.addListener(announceReady);
+browser.runtime.onInstalled.addListener(clearLegacyStorage);
+browser.runtime.onStartup.addListener(clearLegacyStorage);

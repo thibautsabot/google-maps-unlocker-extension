@@ -23,6 +23,24 @@
   const LOG = '[GM-REVIEWS]';
   const MARK = 'data-gm-reviews-hidden';
   const SEEN = new Set();
+  let reads = 0;
+  let discoveryStatus = '';
+  let discoveryReason = '';
+  let discoveryReported = false;
+
+  function reportDiscovery() {
+    if (!reviewsOn || !discoveryStatus || discoveryReported) return;
+    discoveryReported = true;
+    const detail = discoveryStatus === 'ok' ? `detector=${detectorFound}` : `reason=${discoveryReason}`;
+    console.log(LOG, `discovery ${discoveryStatus} ${detail}`);
+  }
+
+  function discovered(status, reason = '') {
+    if (status !== discoveryStatus || reason !== discoveryReason) discoveryReported = false;
+    discoveryStatus = status;
+    discoveryReason = reason;
+    reportDiscovery();
+  }
 
   const FIELD4 = /_\.([A-Za-z0-9$]+)=function\(([A-Za-z0-9$]+)\)\{return _\.[A-Za-z0-9$]+\(\2,4\);?\}/g;
   const escapeReg = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -37,7 +55,6 @@
   // reader. It ignores comments and literals, then matches a narrow control
   // flow shape: a condition containing field 259 and a gate call, with
   // different review-action handlers in the true/false branches.
-  const INLINE_ACTIONS = new Map();
   const lex = (source) => [...source.matchAll(
     /\/\/[^\n]*|\/\*[\s\S]*?\*\/|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|`(?:\\.|[^`\\])*`|[A-Za-z_$][\w$]*|\d+(?:\.\d+)?|===|!==|=>|&&|\|\||==|!=|<=|>=|\?\.|[^\s]/g
   )].map((m) => m[0]).filter((t) => !t.startsWith('//') && !t.startsWith('/*')
@@ -106,7 +123,7 @@
       const open = hasReviewAction(tail);
       if (!signIn || !open || signIn === open || !tail.includes('flow')) continue;
 
-      return { check: call, actions: { signIn, open } };
+      return { check: call, actions: { open } };
     }
     return null;
   }
@@ -172,7 +189,7 @@
     );
     const match = pair.exec(source);
     if (!match) return null;
-    return { signIn: match[2], open: match[3] };
+    return { open: match[3] };
   }
 
   // The reviews tab is the control whose action opens the list and nothing
@@ -198,13 +215,16 @@
     return false;
   }
 
+  const wrappers = new WeakMap();
+  const installs = new Map();
+
   function wrap(name) {
     const root = window._;
     if (!root || typeof root !== 'object') return false;
 
     const described = Object.getOwnPropertyDescriptor(root, name);
-    if (described && !described.configurable) return false;
-    if (described?.get) return true;
+    if (described?.get && wrappers.get(root)?.get(name) === described.get) return true;
+    if (described && (!described.configurable || described.get || described.set)) return false;
 
     let real = typeof root[name] === 'function' ? root[name] : null;
 
@@ -213,24 +233,39 @@
       return typeof real === 'function' ? real.call(this, value) : false;
     };
 
-    Object.defineProperty(root, name, {
-      configurable: true,
-      enumerable: true,
-      get() { return wrapped; },
-      set(fn) { if (typeof fn === 'function') real = fn; }
-    });
-
+    const get = () => wrapped;
+    try {
+      Object.defineProperty(root, name, {
+        configurable: true,
+        enumerable: described?.enumerable ?? true,
+        get,
+        set(fn) { if (typeof fn === 'function') real = fn; }
+      });
+    } catch (_) { return false; }
+    if (!wrappers.has(root)) wrappers.set(root, new Map());
+    wrappers.get(root).set(name, get);
     return true;
   }
 
   function wrapSoon(name) {
-    if (wrap(name)) return;
+    if (installs.has(name)) return;
+    const done = () => {
+      if (!wrap(name)) return false;
+      discovered('ok');
+      return true;
+    };
+    if (done()) return;
 
     let tries = 0;
     const timer = setInterval(() => {
       tries += 1;
-      if (wrap(name) || tries > 50) clearInterval(timer);
+      if (done() || tries >= 50) {
+        clearInterval(timer);
+        installs.delete(name);
+        if (discoveryStatus !== 'ok') discovered('failed', 'wrap-failed');
+      }
     }, 100);
+    installs.set(name, timer);
   }
 
   function learn(source) {
@@ -319,12 +354,18 @@
   async function readScript(url) {
     if (SEEN.has(url)) return;
     SEEN.add(url);
+    reads++;
 
     try {
       const response = await fetch(url);
+      if (response.status < 200 || response.status >= 300) throw new Error(`HTTP ${response.status}`);
       learn(await response.text());
     } catch (error) {
-      console.warn(LOG, 'could not read the Maps script', error);
+      SEEN.delete(url);
+      discoveryReason = error?.message || String(error);
+    } finally {
+      reads--;
+      if (!reads && !checkFound) discovered('failed', discoveryReason || 'gate-not-found');
     }
   }
 
@@ -346,7 +387,7 @@
       if (pending) return;
       pending = setTimeout(() => {
         pending = 0;
-        try { hideNotice(); } catch (error) { console.warn(LOG, 'hide failed', error); }
+        try { hideNotice(); } catch (error) { console.warn(LOG, `notice failed reason=${error?.message || String(error)}`); }
       }, 200);
     };
 
@@ -354,6 +395,7 @@
       scanScripts();
       new MutationObserver(() => {
         scanScripts();
+        if (checkFound && discoveryStatus !== 'ok') wrapSoon(checkFound);
         schedule();
       }).observe(document.documentElement, { childList: true, subtree: true });
       schedule();
@@ -395,23 +437,10 @@
 
   watch();
 
-  // What this load's review section says about the session. Limited: Maps
-  // drew its see-more button, or the notice this script hides. Clear: the
-  // rating chart is up and neither is. The chart is found by its action
-  // name, which the bundle spells the same way in every build. A page that
-  // shows neither has said nothing, and is not taken as clear.
-  const seeMoreShown = () => !!seeMore
-    && [...document.querySelectorAll('button, [role="button"]')]
-      .some((b) => norm(b.getAttribute('aria-label') || b.textContent).startsWith(norm(seeMore)));
-
-  const chartShown = () => !!document.querySelector('[jsaction*="reviewChart.moreReviews"]');
-
   window.__GM_REVIEWS__ = {
     // What discovery found in the Maps script. Read by the tests, and handy
     // in the console when a Maps update leaves a feature doing nothing.
-    learned: () => ({ check: checkFound, detector: detectorFound, notice, seeMore, reviewsTab }),
-    limited: () => !!document.querySelector(`[${MARK}]`) || seeMoreShown(),
-    clear: () => chartShown() && !seeMoreShown() && !document.querySelector(`[${MARK}]`)
+    learned: () => ({ check: checkFound, detector: detectorFound, notice, seeMore, reviewsTab })
   };
 
   window.addEventListener('message', (event) => {
@@ -420,7 +449,11 @@
     const data = event.data;
     if (!data || data.source !== 'gm-native-maps' || data.type !== 'gm-settings') return;
 
-    reviewsOn = !!data.features?.reviews;
+    const enabled = !!data.features?.reviews;
+    if (enabled && !reviewsOn) discoveryReported = false;
+    reviewsOn = enabled;
+    if (reviewsOn && checkFound && discoveryStatus !== 'ok') wrapSoon(checkFound);
+    reportDiscovery();
     if (reviewsOn) hideNotice();
     else showNotice();
   });

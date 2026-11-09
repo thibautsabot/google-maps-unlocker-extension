@@ -9,9 +9,10 @@
 import { execFileSync } from 'node:child_process';
 import { cpSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { hostPermissions, mapsMatches } from './google-domains.mjs';
 
-const ROOT = new URL('..', import.meta.url).pathname;
+const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const manifest = JSON.parse(readFileSync(join(ROOT, 'manifest.json'), 'utf8'));
 const { version } = manifest;
 

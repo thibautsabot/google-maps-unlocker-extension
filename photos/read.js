@@ -171,21 +171,6 @@
     return found.length === 1 ? found[0] : null;
   }
 
-  // Distinct photo URLs in a blob of page text. Inside a script the URLs are
-  // escaped — \/ for slashes, \u003d for "=" — so the text is unescaped before
-  // matching. The size suffix is dropped so one photo offered at several
-  // sizes is not counted repeatedly.
-  const photoUrls = (text) => {
-    const readable = String(text)
-      .replace(/\\u003d/gi, '=')
-      .replace(/\\u0026/gi, '&')
-      .replace(/\\\//g, '/');
-
-    const found = readable.match(
-      /https:\/\/[^"\\\s]*?(?:googleusercontent\.com|ggpht\.com|streetviewpixels[^"/\\\s]*)\/[^"\\\s]+/g) || [];
-    return new Set(found.map((url) => url.split('=')[0]));
-  };
-
   // One gallery reply made from several. The first page's reply is kept as it
   // is, and the photo lists of the later pages are appended to its list, so
   // everything else in it (categories, session, flags) is untouched. The
@@ -229,8 +214,8 @@
     return { payload: merged, added };
   }
 
-  // Where a reply keeps the token for its next page. A hint (the slot a
-  // session that paged taught) is used while it still holds a string. Without
+  // Where a reply keeps the token for its next page. A taught slot must still
+  // hold a long string; null or empty at that slot means paging ended. Without
   // one, the token is the longest string at the top of the payload, and only
   // if it is clearly longer than the rest: the session id beside it is 23
   // characters where the token is hundreds. Null when nothing stands out, so
@@ -238,7 +223,11 @@
   const TOKEN_MIN = 40;
   function tokenSlot(payload, hint = null) {
     if (!Array.isArray(payload)) return null;
-    if (Number.isInteger(hint) && typeof payload[hint] === 'string' && payload[hint]) return hint;
+    // A learned slot may become a session id, or an explicit end marker.
+    if (Number.isSafeInteger(hint) && hint >= 0) {
+      if (payload[hint] === null || payload[hint] === '') return null;
+      if (typeof payload[hint] === 'string' && payload[hint].length >= TOKEN_MIN) return hint;
+    }
 
     const strings = payload.map((v, i) => [i, typeof v === 'string' ? v.length : 0]).filter(([, n]) => n >= TOKEN_MIN);
     if (!strings.length) return null;
@@ -258,11 +247,13 @@
   // The top-level slots holding true. A limited session's reply carries one
   // that an unlimited first page does not have, and while it is set Maps does
   // not ask for the next page. normal lists the slots seen true in replies
-  // that were not capped; those are left alone. With no reference yet every
-  // true slot counts, which is only the one flag on every reply measured.
+  // that were not capped; those are left alone. Exactly one remaining true
+  // is identifiable; several unknown flags are left untouched.
   function capFlags(payload, normal = []) {
     if (!Array.isArray(payload)) return [];
-    return payload.map((v, i) => (v === true && !normal.includes(i) ? i : -1)).filter((i) => i >= 0);
+    const candidates = payload.map((v, i) => (v === true && !normal.includes(i) ? i : -1)).filter((i) => i >= 0);
+    // Multiple unknown booleans cannot identify the limited flag safely.
+    return candidates.length === 1 ? candidates : [];
   }
 
   function trueSlots(payload) {
@@ -342,7 +333,7 @@
   }
 
   window.__GMX = {
-    describe, askedFor, single, photoUrls, envelopes, learnLayout, DEFAULT_LAYOUT, mergePages, frameReply,
-    googleJson, at, tokenSlot, learnTokenSlot, capFlags, trueSlots
+    describe, askedFor, single, envelopes, learnLayout, DEFAULT_LAYOUT, mergePages, frameReply,
+    googleJson, at, tokenSlot, learnTokenSlot, capFlags, trueSlots, isPhotoEntry
   };
 })();

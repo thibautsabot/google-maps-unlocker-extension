@@ -2,15 +2,99 @@
 
 import { loadPage, galleryReply, askingFor, askingBlind, askingBatched, storage, suite, wait, serverReply, longToken }
   from './lib/harness.mjs';
-import { REQUEST_1, REQUEST_2, REPLY_1, REPLY_2, TOKEN_1, REQUEST_CAPPED, REPLY_CAPPED, frame, shifted }
+import { read } from './lib/harness.mjs';
+import { REQUEST_1, REQUEST_2, REPLY_1, REPLY_2, TOKEN_1, REQUEST_CAPPED, REPLY_CAPPED, frame, shifted, serverJson }
   from './lib/real.mjs';
 
 const t = suite('page');
 
+// Captured short gallery: 10 + 7 photos, then a null terminal list. Do not
+// discard accumulated pages merely because Google's announced total is 20.
+{
+  const page = loadPage();
+  page.switchOn();
+  const capped = (count, token, first) => {
+    const text = galleryReply(count, 20, token, first);
+    const match = [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)][0];
+    const payload = JSON.parse(JSON.parse(`"${match[1]}"`));
+    payload[15] = true;
+    return frame('hspqX', payload);
+  };
+  const terminal = [null, 20, null, 'session', null, longToken('T17'), null, null, null, null, true, null, null, ['category'], null, true];
+  const response = await page.receiveByRequest([
+    capped(10, 'OLD20', 0), capped(10, 'T10', 0), capped(7, 'T17', 10), frame('hspqX', terminal)
+  ], askingFor(20));
+  const text = await response.text();
+  const match = [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)][0];
+  const payload = JSON.parse(JSON.parse(`"${match[1]}"`));
+  t.check('null terminal: retains all seventeen unique photos', payload[0].length === 17 && new Set(payload[0].map((p) => p[0])).size === 17);
+  t.check('null terminal: removes exhausted continuation token', payload[5] === null);
+  t.check('null terminal: preserves end marker, clears limited flag', payload[10] === true && payload[15] === null);
+  t.check('null terminal: reports delivered count instead of original ten', page.logs.some((l) => l.includes('deliveredBatch=17 uniqueSupplied=17 announcedTotal=20 nextToken=none')));
+  const requests = page.win.fetchCalls.slice(1).map((c) => JSON.parse(JSON.parse(new URLSearchParams(c.init.body).get('f.req'))[0][0][1]));
+  t.check('null terminal: requests remaining three after ten plus seven', requests.map((args) => args[4][2][1]).join(',') === '10,10,3');
+}
+
+// Fixture framing is independent of production helpers, including both JSON
+// layers and non-ASCII byte counts.
+{
+  t.check('fixture: Google escapes special characters but leaves slashes and Unicode',
+    serverJson('<>&=/Café\u2028\u2029') === '"\\u003c\\u003e\\u0026\\u003d/Café\\u2028\\u2029"');
+  const payload = ['Café=<x>&/\u2028'];
+  const reply = frame('hspqX', payload);
+  const [, , length, envelope] = reply.split('\n');
+  t.check('fixture: frame length measures envelope UTF-8 bytes plus two',
+    Number(length) === new TextEncoder().encode(envelope).length + 2
+    && Number(length) > envelope.length + 2 && !reply.endsWith('\n'));
+  t.check('fixture: nested escapes preserve the payload',
+    envelope.includes('\\\\u003d') && JSON.stringify(JSON.parse(JSON.parse(envelope)[0][2])) === JSON.stringify(payload));
+}
+
+// --- obsolete session data is removed without clearing production state ------
+{
+  const session = storage();
+  const local = storage();
+  const obsolete = ['gmnx.tokenSamples', 'gmnx.researchSnapshots', 'gmnx.galleryUrl'];
+  for (const key of obsolete) session.setItem(key, 'obsolete');
+  session.setItem('gmnx.fillGrid', '0');
+  session.setItem('unrelated', 'keep');
+  const metadata = {
+    'gmnx.pagingLayout': JSON.stringify({ hspqX: { size: [4, 3, 1], token: [4, 3, 2] } }),
+    'gmnx.tokenSlot': JSON.stringify({ hspqX: 16 }),
+    'gmnx.normalFlags': '[11]'
+  };
+  for (const [key, value] of Object.entries(metadata)) local.setItem(key, value);
+
+  const page = loadPage({ sessionStorage: session, localStorage: local });
+  page.switchOn();
+  t.check('migration: obsolete session research data is removed on load',
+    obsolete.every((key) => session.getItem(key) === null));
+  t.check('migration: fill override and unrelated session data remain',
+    session.getItem('gmnx.fillGrid') === '0' && page.api().fillGrid() === 'off' && session.getItem('unrelated') === 'keep');
+  t.check('migration: learned paging metadata remains',
+    Object.entries(metadata).every(([key, value]) => local.getItem(key) === value));
+}
+
+{
+  const page = loadPage();
+  page.switchOn();
+  const response = await page.receiveByRequest([
+    galleryReply(10, 116, 'SKIPS20', 90), // discarded size-20 reply
+    galleryReply(10, 116, 'CURSOR10', 0),
+    galleryReply(10, 116, 'CURSOR20', 10)
+  ], askingBatched(20));
+  const text = await response.text();
+  const payload = JSON.parse(JSON.parse(`"${[...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)][0][1]}"`));
+  t.check('replay: discarded size-20 photos do not enter the list', payload[0][0][0] === 'PHOTO0' && payload[0].at(-1)[0] === 'PHOTO19');
+  t.check('replay: merged list carries cursor20 from size-10 requests', payload[5] === longToken('CURSOR20'));
+  const calls = page.win.fetchCalls.slice(1).map((c) => JSON.parse(new URLSearchParams(c.init.body).get('f.req')));
+  t.check('replay: unrelated batched calls are not resent', calls.every((c) => c[0].length === 1 && c[0][0][0] === 'hspqX'));
+  t.check('replay: first request restarts at null instead of SKIPS20', JSON.parse(calls[0][0][0][1])[4][2][2] === null);
+}
 // --- the same gallery call sent as fetch(new Request(...)) -------------------
 // Maps moved the gallery call from XHR to fetch with the body inside the
 // Request and no second argument. The body was never read, so every reply
-// was ignored: no cap was seen, no roll happened, and the grid stayed short.
+// was ignored: no cap was seen and the grid stayed short.
 {
   const page = loadPage();
   page.switchOn();
@@ -64,120 +148,6 @@ const t = suite('page');
     page.api().capture() !== page.api().capture());
 }
 
-// --- GMGallery.probeNextPage() ----------------------------------------------
-// Asks for the page after the one last seen, with the token that page handed
-// back. It resends Maps' own request, so the body has to be the same request
-// with only the token changed, and nothing secret may come back out.
-{
-  const page = loadPage();
-  page.switchOn();
-  const first = await page.api().probeNextPage();
-  t.check('probe: nothing seen yet is said plainly', typeof first === 'string' && first.includes('open the Photos grid'));
-
-  await page.replyByRequest(galleryReply(10, 45, 'TOKEN-FROM-REPLY'), askingFor(20));
-  page.win.fetchCalls.length = 0;
-  page.win.fetchReplyText = galleryReply(2, 45);
-
-  const result = await page.api().probeNextPage();
-  const [sent] = page.win.fetchCalls;
-
-  t.check('probe: one request is sent', page.win.fetchCalls.length === 1);
-  t.check('probe: it is a POST with credentials', sent?.init?.method === 'POST' && sent?.init?.credentials === 'include');
-  t.check('probe: the token from the reply is in the new request',
-    decodeURIComponent(sent?.init?.body || '').includes('TOKEN-FROM-REPLY'));
-  const paging = (() => {
-    try {
-      const freq = JSON.parse(new URLSearchParams(sent.init.body).get('f.req'));
-      return JSON.parse(freq[0][0][1])[4][2];
-    } catch (_) { return null; }
-  })();
-  t.check('probe: the page size asked for is unchanged', paging?.[1] === 20);
-  t.check('probe: only the token slot differs from the original request',
-    paging?.[2] === longToken('TOKEN-FROM-REPLY') && paging?.[0] === null && paging?.[4] === 1);
-  t.check('probe: the answer describes the shape', result?.status === 200 && result?.gotGalleryFrame === true);
-  t.check('probe: the answer gives lengths, not photos', result?.list === 2 && result?.total === 45);
-  t.check('probe: no token or URL is handed back',
-    !JSON.stringify(result).includes('TOKEN-FROM-REPLY') && !JSON.stringify(result).includes('googleusercontent'));
-}
-{
-  const page = loadPage();
-  page.switchOn();
-  await page.replyByRequest(galleryReply(10, 45, null), askingFor(20));
-  const result = await page.api().probeNextPage();
-  t.check('probe: a reply with no token is reported, not retried',
-    typeof result === 'string' && result.includes('no continuation token'));
-}
-
-// --- GMGallery.probeAllPages() ----------------------------------------------
-// Walks the continuation tokens and counts the photos each page adds that the
-// earlier pages did not have.
-{
-  const page = loadPage();
-  page.switchOn();
-  await page.replyByRequest(galleryReply(10, 40, 'T1', 0), askingFor(20));
-  page.win.fetchCalls.length = 0;
-  page.win.fetchReplies = [
-    galleryReply(10, 40, 'T2', 10),
-    galleryReply(10, 40, 'T3', 20),
-    galleryReply(10, 40, null, 30)
-  ];
-
-  const result = await page.api().probeAllPages();
-  t.check('walk: one request per page after the first', page.win.fetchCalls.length === 3);
-  const read = result.pages.filter((p) => p.got !== undefined);
-  t.check('walk: every page read adds ten new photos', read.map((p) => p.added).join() === '10,10,10,10');
-  t.check('walk: forty distinct photos are counted', result.distinctPhotos === 40);
-  t.check('walk: it stops when a page carries no token',
-    result.pages.at(-1).stoppedBecause === 'no token to follow' && read.length === 4);
-  t.check('walk: nothing secret comes back',
-    !JSON.stringify(result).includes('googleusercontent') && !/T[123]/.test(JSON.stringify(result)));
-}
-{
-  const page = loadPage();
-  page.switchOn();
-  await page.replyByRequest(galleryReply(10, 40, 'T1', 0), askingFor(20));
-  page.win.fetchReplies = [galleryReply(10, 40, 'T2', 0)];
-
-  const result = await page.api().probeAllPages();
-  t.check('walk: a page that repeats the last one ends the walk',
-    result.pages.at(-1).stoppedBecause === 'a page added nothing new');
-  t.check('walk: the repeat is not counted as new photos', result.distinctPhotos === 10);
-}
-{
-  const page = loadPage();
-  page.switchOn();
-  await page.replyByRequest(galleryReply(10, 40, 'T1', 0), askingFor(20));
-  page.win.fetchReplies = [galleryReply(10, 1000, 'T2', 10)];
-
-  // The fill runs on the first reply by default; only the walk's own requests count.
-  const before = page.win.fetchCalls.length;
-  const result = await page.api().probeAllPages({ maxPages: 2 });
-  t.check('walk: maxPages bounds the number of requests', page.win.fetchCalls.length - before <= 2);
-  t.check('walk: the pages it did read are reported', result.pages.length === 2);
-}
-{
-  const page = loadPage();
-  page.switchOn();
-  const result = await page.api().probeAllPages();
-  t.check('walk: nothing seen yet is said plainly', typeof result === 'string');
-}
-
-// --- which exchange the probes start from -------------------------------------
-// Maps also makes a small gallery call for the overview strip, and it can
-// arrive after the grid's. The probes must keep walking from the grid.
-{
-  const page = loadPage();
-  page.switchOn();
-  await page.replyByRequest(galleryReply(10, 116, 'GRID-TOKEN', 0), askingFor(20));
-  await page.replyByRequest(galleryReply(2, 2, 'STRIP-TOKEN', 100), askingFor(4));
-  page.win.fetchCalls.length = 0;
-  page.win.fetchReplies = [galleryReply(10, 116, null, 10)];
-
-  const result = await page.api().probeAllPages();
-  t.check('the grid exchange is kept when a smaller call arrives after it', result.pages[0].total === 116);
-  t.check('the walk continues from the grid, not the strip', result.distinctPhotos === 20);
-}
-
 // --- capture shows flags and counts with their value ---------------------------
 {
   const page = loadPage();
@@ -188,8 +158,8 @@ const t = suite('page');
   const shown = Object.fromEntries(slots);
   t.check('capture: the announced total shows its number', shown[1] === 'number:45');
   t.check('capture: the more-pages flag shows its value', /^boolean:(true|false)$/.test(shown[10] || ''));
-  t.check('capture: a token still shows only its first characters',
-    typeof shown[5] === 'string' && shown[5].startsWith('string(') && shown[5].length < 30);
+  t.check('capture: a token shows only its length',
+    shown[5] === `string(${longToken('token').length})`);
 }
 
 // --- merging gallery pages into one reply -------------------------------------
@@ -230,12 +200,11 @@ const photosIn = async (response) => {
 };
 
 {
-  // Private sessions come first: the fill stays off until the background says
-  // they are used up.
+  // Automatic fill follows the photos switch.
   const page = loadPage();
   page.switchOn();
   t.check('fill: on by default when the photos switch is on', page.api().fillGrid() === 'on');
-  const allowed = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
+  const allowed = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
   t.check('fill: and it lengthens the list', await photosIn(allowed) === 20);
 
   page.api().fillGrid(false);
@@ -260,22 +229,24 @@ const photosIn = async (response) => {
 
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0),
+    galleryReply(10, 116, 'T1', 0),
     galleryReply(10, 116, 'T2', 10),
     galleryReply(10, 116, 'T3', 20),
     galleryReply(8, 116, null, 30)
   ], askingFor(20));
 
   t.check('fill: the page gets one full page of photos, as an uncapped session would', await photosIn(response) === 20);
-  t.check('fill: only the page that was needed is fetched', page.win.fetchCalls.length === 2);
+  t.check('fill: the original is replaced by two size-10 requests', page.win.fetchCalls.length === 3);
   t.check('fill: the follow-ups ask for the same page size',
     page.win.fetchCalls.slice(1).every((c) => {
       try {
         const freq = JSON.parse(new URLSearchParams(c.init.body).get('f.req'));
-        return JSON.parse(freq[0][0][1])[4][2][1] === 20;
+        return JSON.parse(freq[0][0][1])[4][2][1] === 10;
       } catch (_) { return false; }
     }));
   t.check('fill: the response keeps its status', response.status === 200);
-  t.check('fill: it was announced in the log', page.logs.some((l) => l.includes('grid was filled from 1 more pages')));
+  t.check('fill: one concise result records counts, pages, flags and duration',
+    page.logs.length === 1 && /^\[GM-GALLERY\] fill ok: serverBatch=10 deliveredBatch=20 uniqueSupplied=20 announcedTotal=116 nextToken=present serverPages=2 flagsCleared=0 ms=\d+$/.test(page.logs[0]));
 }
 {
   const page = loadPage();
@@ -314,10 +285,11 @@ const photosIn = async (response) => {
   page.api().fillGrid(true);
 
   const response = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
-  t.check('fill: asked for by fillGrid(true), it runs without the photos switch',
-    page.logs.some((l) => l.includes('fill: a gallery reply arrived')));
-  t.check('fill: and it says why when it leaves the reply alone',
-    page.logs.some((l) => l.includes('fill: left the reply as it is')) && await photosIn(response) === 10);
+  t.check('fill: fillGrid(true) attempts replay without the photos switch',
+    page.win.fetchCalls.length === 2);
+  t.check('fill: one concise failure explains why the original reply remains',
+    page.logs.length === 1 && /^\[GM-GALLERY\] fill failed: size-10 replay failed; ms=\d+$/.test(page.logs[0])
+    && await photosIn(response) === 10);
 }
 
 // --- keeping the framing of the server's own reply ---------------------------
@@ -325,12 +297,12 @@ const photosIn = async (response) => {
 // Maps reads those, so the replacement must carry them. Each length line is
 // the json's UTF-8 length plus two, measured on real replies.
 {
-  const { mergePages, frameReply, googleJson } = loadPage().win.__GMX;
+  const { mergePages, frameReply } = loadPage().win.__GMX;
   const bytes = (text) => new TextEncoder().encode(text).length;
   const trailer1 = '[["di",37],["af.httprm",37,"8086949976010301048",18]]';
   const trailer2 = '[["e",4,null,null,140]]';
 
-  const chunk = googleJson([['wrb.fr', 'hspqX', googleJson(REPLY_1), null, null, null, 'generic']]);
+  const chunk = serverJson([['wrb.fr', 'hspqX', serverJson(REPLY_1), null, null, null, 'generic']]);
   const original = serverReply([chunk, trailer1, trailer2]);
 
   const merged = mergePages([REPLY_1, REPLY_2]);
@@ -374,7 +346,7 @@ const photosIn = async (response) => {
   const page = loadPage();
   page.switchOn();
   const response = await page.receiveByRequest([
-    galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
+    galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
   ], askingFor(20));
   t.check('fill: one page more, up to the page size asked for', await photosIn(response) === 20);
 
@@ -414,13 +386,13 @@ const photosIn = async (response) => {
   page.switchOn();
   page.api().fillGrid(true);
   const response = await page.receiveByRequest([
-    galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
+    galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
   ], askingFor(20));
   t.check('trace: the fill still works behind it', await photosIn(response) === 20);
   t.check('trace: the fill records how many pages and how long',
-    page.api().trace().some((e) => e.kind === 'fill' && e.pages === 1 && typeof e.ms === 'number'));
-  t.check('fill: the log says how long Maps waited',
-    page.logs.some((l) => /and Maps waited \d+ ms for it/.test(l)));
+    page.api().trace().some((e) => e.kind === 'fill' && e.pages === 2 && typeof e.durationMs === 'number'));
+  t.check('fill: the concise result includes Maps wait duration',
+    page.logs.length === 1 && /^\[GM-GALLERY\] fill ok: serverBatch=10 deliveredBatch=20 uniqueSupplied=20 announcedTotal=116 nextToken=present serverPages=2 flagsCleared=0 ms=\d+$/.test(page.logs[0]));
 }
 
 // --- the replacement Response looks like a fetched one -------------------------
@@ -429,7 +401,7 @@ const photosIn = async (response) => {
   page.switchOn();
   page.api().fillGrid(true);
   const response = await page.receiveByRequest([
-    galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
+    galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
   ], askingFor(20));
 
   t.check('response: the replacement holds the longer list', await photosIn(response) === 20);
@@ -453,7 +425,7 @@ const photosIn = async (response) => {
     const page = loadPage();
     page.switchOn();
     return read(await page.receiveByRequest([
-      galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(10, 116, 'T3', 20)
+      galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(10, 116, 'T3', 20)
     ], askingFor(20)));
   };
 
@@ -463,7 +435,7 @@ const photosIn = async (response) => {
 }
 
 // --- escapes: a rebuilt reply must be written the way the server writes it ------
-// The server writes < > & = / and the line separators as \uXXXX. Plain
+// The server writes < > & = and the line separators as \uXXXX, not /. Plain
 // JSON.stringify does not, so a rebuilt reply came back shorter than the
 // original and its length lines no longer matched. The first echo run on a
 // real page showed it: 10566 characters became 10495.
@@ -483,8 +455,8 @@ const photosIn = async (response) => {
   const url = 'https://lh3.googleusercontent.com/gps-cs-s/ABC=w203-h270-k-no?x=1&y=2';
   const entry = (id) => [id, 10, 12, null, null, null, [`${url}&id=${id}`, '', [3000, 4000], [203, 100]]];
   const payload = [[entry('CIAB1'), entry('CIAB2'), entry('CIAB3')], 45, null, 'S', null, 'TOK'];
-  const inner = googleJson(payload);
-  const chunk = googleJson([['wrb.fr', 'hspqX', inner, null, null, null, 'generic']]);
+  const inner = serverJson(payload);
+  const chunk = serverJson([['wrb.fr', 'hspqX', inner, null, null, null, 'generic']]);
   const trailer = '[["e",4,null,null,140]]';
   const server = serverReply([chunk, trailer]);
 
@@ -510,13 +482,13 @@ const photosIn = async (response) => {
 // gave 10466, and the rebuild was one character longer than the server's.
 {
   const page = loadPage();
-  const { googleJson, frameReply } = page.win.__GMX;
+  const { frameReply } = page.win.__GMX;
   const bytes = (text) => new TextEncoder().encode(text).length;
 
   const entry = (id, name) => [id, 10, 12, null, null, null,
     [`https://lh3.googleusercontent.com/gps-cs-s/${id}=w203`, name, [3000, 4000], [203, 100]]];
   const payload = [[entry('CIAB1', 'Caf\u00e9'), entry('CIAB2', 'Na\u00efve')], 45, null, 'S', null, 'TOK'];
-  const body = googleJson([['wrb.fr', 'hspqX', googleJson(payload), null, null, null, 'generic']]);
+  const body = serverJson([['wrb.fr', 'hspqX', serverJson(payload), null, null, null, 'generic']]);
   const trailer1 = '[["di",21],["af.httprm",21,"-250655609989403101",100]]';
   const trailer2 = '[["e",4,null,null,140]]';
 
@@ -555,7 +527,7 @@ const photosIn = async (response) => {
   };
   const read = async (replies, page = loadPage()) => {
     page.switchOn();
-    const response = await page.receiveByRequest(replies, askingFor(20));
+    const response = await page.receiveByRequest([replies[0], ...replies], askingFor(20));
     const text = await response.text();
     return { page, payload: [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)]
       .map((m) => JSON.parse(JSON.parse(`"${m[1]}"`)))[0] };
@@ -566,7 +538,8 @@ const photosIn = async (response) => {
   const at15 = await read([frame('hspqX', Object.assign(JSON.parse(JSON.stringify(REPLY_CAPPED)), { 5: longToken('T1') })),
     galleryReply(10, 45, 'T2', 10)]);
   t.check('flag: emptied where it is today', !at15.payload[15]);
-  t.check('flag: and the log says where', at15.page.logs.some((l) => l.includes('cleared the limited flag at [15]')));
+  t.check('flag: the concise fill result records one cleared flag',
+    at15.page.logs.length === 1 && /^\[GM-GALLERY\] fill ok: serverBatch=10 deliveredBatch=20 uniqueSupplied=20 announcedTotal=45 nextToken=present serverPages=2 flagsCleared=1 ms=\d+$/.test(at15.page.logs[0]));
 
   const moved = await read([withFlagAt(17, 'T1'), galleryReply(10, 45, 'T2', 10)]);
   t.check('flag: emptied when Google moves it', !moved.payload[17] && !moved.payload[15]);
@@ -591,29 +564,45 @@ const photosIn = async (response) => {
   const { tokenSlot, learnTokenSlot } = loadPage().win.__GMX;
   const payload = [[], 45, null, 'x'.repeat(23), null, null, null, null, null, null, false, null, null, null, null, null, longToken('A')];
   t.check('token: the long string is found where it sits', tokenSlot(payload) === 16);
-  t.check('token: a hint that still holds a string wins', tokenSlot(payload, 3) === 3);
+  t.check('token: a stale hint holding a session id falls back to shape', tokenSlot(payload, 3) === 16);
+  t.check('token: a taught null slot means end, not another long field', tokenSlot(payload, 5) === null);
   t.check('token: nothing long means no token', tokenSlot([[], 45, null, 'x'.repeat(23)]) === null);
   t.check('token: two similar long strings are not guessed between',
     tokenSlot([longToken('A'), longToken('B')]) === null);
   t.check('token: the slot is taught by the token Maps sent back',
     learnTokenSlot(payload, longToken('A')) === 16 && learnTokenSlot(payload, 'other') === null);
 
-  // The fill works when the token has moved.
+  // Discard the size-20 cursor, replay distinct size-10 pages, and return
+  // the last replay cursor in the moved reply slot.
   const moved = (token, first) => {
     const p = JSON.parse(JSON.stringify(REPLY_CAPPED));
+    p[0] = p[0].map((entry, i) => [`MOVED${first + i}`, ...entry.slice(1)]);
     p[5] = null;
     p[16] = longToken(token);
     return frame('hspqX', p);
   };
   const page = loadPage();
   page.switchOn();
-  const response = await page.receiveByRequest([moved('T1'), moved('T2')], askingFor(20));
-  t.check('token: a fill follows a token that moved', page.win.fetchCalls.length >= 2 && response !== undefined);
+  const response = await page.receiveByRequest([
+    moved('SKIPPED', 90), moved('T1', 0), moved('T2', 10)
+  ], askingFor(20));
+  const text = await response.text();
+  const filled = [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)]
+    .map((m) => JSON.parse(JSON.parse(`"${m[1]}"`)))[0];
+  t.check('token: a fill merges distinct pages when the token moved',
+    filled?.[0]?.length === 20 && filled[0].every((entry, i) => entry[0] === `MOVED${i}`));
+  t.check('token: the last replay cursor is returned at the moved slot',
+    filled?.[16] === longToken('T2') && filled[5] === null);
+  const requests = page.win.fetchCalls.slice(1).map((call) =>
+    JSON.parse(JSON.parse(new URLSearchParams(call.init.body).get('f.req'))[0][0][1]));
+  t.check('token: size-10 replay follows the moved cursor, not the discarded one',
+    requests.length === 2 && requests[0][4][2][2] === null
+    && requests[1][4][2][2] === longToken('T1') && requests.every((request) => request[4][2][1] === 10));
 }
 
-// --- follow-up pages Maps asks for itself are not filled again ----------------
-// With the token in its request, Maps is paging on its own. Filling those too
-// asked the server for another page each time and doubled the requests.
+// --- unflagged follow-ups stay untouched; flagged short pages replay below ----
+// A token alone does not trigger filling: without a learned limited flag,
+// Maps' follow-up passes through. Flagged short pages replay at size 10.
 {
   const followUp = REQUEST_2;
 
@@ -626,15 +615,14 @@ const photosIn = async (response) => {
     JSON.stringify(JSON.parse(new URLSearchParams(followUp).get('f.req'))).includes(TOKEN_1.slice(0, 20)));
   t.check('follow-up: no extra page is fetched', page.win.fetchCalls.length === 1);
   t.check('follow-up: the reply is the server\'s own', await photosIn(response) === 10);
-  t.check('follow-up: the log says why',
-    page.logs.some((l) => l.includes('follow-up page Maps asked for itself')));
+  t.check('follow-up: an unchanged page produces no console noise', page.logs.length === 0);
 
   // The first request, with no token, is still filled.
   const first = loadPage();
   first.switchOn();
   first.api().fillGrid(true);
   const filled = await first.receiveByRequest([
-    galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)
+    galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)
   ], askingFor(20));
   t.check('follow-up: a first request is still filled', await photosIn(filled) === 20);
 }
@@ -659,13 +647,15 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
-  await page.receiveByRequest([cappedPage('T1', 0), cappedPage('T2', 10)], askingFor(20));
+  await page.receiveByRequest([cappedPage('T1', 0), cappedPage('T1', 0), cappedPage('T2', 10)], askingFor(20));
   page.win.fetchCalls.length = 0;
+  page.logs.length = 0;
 
   const followUp = await page.receiveByRequest([cappedPage('T3', 20, 20)], REQUEST_2);
   t.check('flag: a follow-up page has the flag cleared too', !(await flagged(followUp)));
   t.check('flag: a reply that is already the size asked for needs nothing extra', page.win.fetchCalls.length === 1);
-  t.check('flag: the log says so', page.logs.some((l) => l.includes('follow-up page, cleared the limited flag')));
+  t.check('flag: one concise page result records the cleared flag',
+    page.logs.length === 1 && /^\[GM-GALLERY\] page ok: serverBatch=20 deliveredBatch=20 uniqueSupplied=40 announcedTotal=45 nextToken=present serverPages=0 flagsCleared=1 ms=\d+$/.test(page.logs[0]));
 }
 
 // --- follow-up pages are the size Maps asked for ---------------------------------
@@ -689,62 +679,29 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
-  await page.receiveByRequest([capped(10, 112, 'T1', 0), capped(10, 112, 'T2', 10)], askingFor(20));
+  await page.receiveByRequest([capped(10, 112, 'T1', 0), capped(10, 112, 'T1', 0), capped(10, 112, 'T2', 10)], askingFor(20));
 
-  const joined = await page.receiveByRequest([capped(10, 112, 'T3', 20), capped(10, 112, 'T4', 30)], REQUEST_2);
+  page.logs.length = 0;
+  const joined = await page.receiveByRequest([capped(10, 112, 'SKIPPED', 20), capped(10, 112, 'T3', 20), capped(10, 112, 'T4', 30)], REQUEST_2);
   const out = await sizeOf(joined);
   t.check('follow-up: a short page is joined with the next to the size asked for', out.size === 20);
-  t.check('follow-up: one extra page is fetched for it', page.win.fetchCalls.length === 2);
+  t.check('follow-up: two size-10 pages replay the incoming cursor', page.win.fetchCalls.length === 3);
+  const requests = page.win.fetchCalls.slice(1).map((c) => JSON.parse(JSON.parse(new URLSearchParams(c.init.body).get('f.req'))[0][0][1]));
+  t.check('follow-up: replay uses the incoming token, not the skipped token', requests[0][4][2][2] === TOKEN_1);
+  t.check('follow-up: continuation follows the replay token at size ten', requests[1][4][2][2] === longToken('T3') && requests.every((r) => r[4][2][1] === 10));
   t.check('follow-up: the flag is cleared on it', !out.flag);
-  t.check('follow-up: the log says it joined', page.logs.some((l) => l.includes('joined the next page')));
+  t.check('follow-up: one concise page result records the joined count',
+    page.logs.length === 1 && /^\[GM-GALLERY\] page ok: serverBatch=10 deliveredBatch=20 uniqueSupplied=40 announcedTotal=112 nextToken=present serverPages=2 flagsCleared=1 ms=\d+$/.test(page.logs[0]));
 
   // The last page has nothing to join.
-  const last = await page.receiveByRequest([capped(8, 112, null, 50)], REQUEST_2);
-  t.check('follow-up: the last page is left as it is', (await sizeOf(last)).size === 8 && page.win.fetchCalls.length === 1);
-}
-
-// --- GMGallery.tokens() compares continuation tokens without showing them --------
-{
-  // Tokens are protobuf-like blobs, mostly zero bytes. These differ at known places.
-  const make = (changes) => {
-    const bytes = new Uint8Array(120);
-    bytes.set([0x12, 0xf8, 0x03, 0x29, 0x84, 0x22, 0xe3], 0);
-    bytes.fill(0, 7);
-    for (const [at, value] of Object.entries(changes)) bytes[at] = value;
-    return Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
-  };
-  const reply = (token) => frame('hspqX', Object.assign(JSON.parse(JSON.stringify(REPLY_CAPPED)), { 5: token }));
-
-  const page = loadPage();
-  page.switchOn();
-  t.check('tokens: nothing seen is said plainly', String(page.api().tokens()).includes('0 token seen'));
-
-  await page.replyByRequest(reply(make({ 40: 1, 41: 9 })), askingFor(20));
-  await page.replyByRequest(reply(make({ 40: 2, 41: 9 })), askingFor(20));
-  await page.replyByRequest(reply(make({ 40: 3, 41: 9 })), askingFor(20));
-
-  const out = page.api().tokens();
-  t.check('tokens: three pages of one load are three samples', out.tokens === 3 && out.loads === 1);
-  t.check('tokens: only the position that moves is reported between pages',
-    out.betweenPages.length === 2 && out.betweenPages.every((d) => d.changed === 1 && d.positions[0][0] === 40));
-  t.check('tokens: with the bytes found there', out.betweenPages[0].positions[0][1] === '01'
-    && out.betweenPages[0].positions[0][2] === '02');
-  t.check('tokens: no token is handed back',
-    !JSON.stringify(out).match(/[A-Za-z0-9_-]{60,}/));
-
-  // A repeated token is not a new sample.
-  await page.replyByRequest(reply(make({ 40: 3, 41: 9 })), askingFor(20));
-  t.check('tokens: the same token twice is one sample', page.api().tokens().tokens === 3);
-
-  t.check('tokens: forgetting starts over',
-    (page.api().forgetTokens(), String(page.api().tokens()).includes('0 token seen')));
+  const last = await page.receiveByRequest([capped(8, 112, null, 50), capped(8, 112, null, 50)], REQUEST_2);
+  t.check('follow-up: the last page is left as it is', (await sizeOf(last)).size === 8 && page.win.fetchCalls.length === 2);
 }
 
 // --- a jump of the scroll position is recorded in the trace ----------------------
 {
   const page = loadPage();
   page.switchOn();
-  const { scrollListeners } = page;
   const pane = { nodeType: 1, scrollTop: 2400, scrollHeight: 5000, clientHeight: 600,
     querySelectorAll: () => [1, 2, 3] };
   page.scrollEvent(pane);
@@ -772,7 +729,7 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
-  await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
+  await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
   const el = pane(940, 2070);
   reset(page, el);
   t.check('restore: the position Maps reset is put back', el.scrollTop === 940);
@@ -819,7 +776,7 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
+  await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
   // The open photo's neighbours: two photos, a total of two, no token.
   await page.receiveRpc('hspqX', [galleryReply(2, 2, null, 0)]);
   await wait(50);
@@ -827,10 +784,9 @@ const photosIn = async (response) => {
     page.outcomes().length === 1 && page.outcomes()[0].firstPage === 20 && page.outcomes()[0].serverTotal === 116);
 }
 
-// --- what the background is told, and the private-window fallback ---------------
-// A filled list that reaches the page size is reported as served in full, so
-// no private window opens. A capped reply that could not be filled is reported
-// as it came, so the roll still starts.
+// --- gallery state reflects the reply handed to Maps ---------------------------
+// A filled list that reaches the requested page size is recorded as served
+// in full. A capped reply that could not be filled keeps its original counts.
 {
   const outcome = async (replies, request = askingFor(20)) => {
     const page = loadPage();
@@ -839,26 +795,26 @@ const photosIn = async (response) => {
     return page.outcomes();
   };
 
-  const filled = await outcome([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)]);
-  t.check('report: a filled list is reported once', filled.length === 1);
-  t.check('report: and as served in full, so nothing is rolled', filled[0]?.firstPage === 20);
+  const filled = await outcome([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)]);
+  t.check('state: a filled list has one gallery record', filled.length === 1);
+  t.check('state: a filled list records the requested page size', filled[0]?.firstPage === 20);
 
   const noMore = await outcome([galleryReply(10, 116, 'T1', 0), 'garbage']);
-  t.check('report: when the fill fails, the capped reply is reported as it came', noMore[0]?.firstPage === 10);
-  t.check('report: and as capped, so the private-window roll starts',
+  t.check('state: a failed fill keeps the original served count', noMore[0]?.firstPage === 10);
+  t.check('state: a failed fill retains the capped counts',
     noMore[0]?.firstPage < noMore[0]?.asked && noMore[0]?.serverTotal > noMore[0]?.firstPage);
 
   const noToken = await outcome([galleryReply(10, 116, null, 0)]);
-  t.check('report: a capped reply with no token still reaches the roll', noToken[0]?.firstPage === 10);
+  t.check('state: a capped reply with no token keeps its served count', noToken[0]?.firstPage === 10);
 
   const uncapped = await outcome([galleryReply(20, 116, 'T1', 0)]);
-  t.check('report: an uncapped reply is reported as it is', uncapped[0]?.firstPage === 20);
+  t.check('state: an uncapped reply keeps its served count', uncapped[0]?.firstPage === 20);
 
   const page = loadPage();
   page.switchOn();
   page.api().fillGrid(false);
   await page.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
-  t.check('report: with the fill off the capped reply reaches the roll',
+  t.check('state: with fill off the original served count remains',
     page.outcomes()[0]?.firstPage === 10);
 }
 
@@ -971,7 +927,8 @@ const photosIn = async (response) => {
   generous.reply(frame('hspqX', REPLY_2), shifted(REQUEST_2));
   await wait(50);
   t.check('moved: a session that pages learns where the page size went, and says so',
-    generous.logs.some((l) => l.includes('has moved from [4,2,1] to [4,3,1]')));
+    generous.logs.filter((l) => l.startsWith('[GM-GALLERY] layout ok: rpc=hspqX size=')).join('\n')
+      === '[GM-GALLERY] layout ok: rpc=hspqX size=[4,2,1]->[4,3,1] token=[4,2,2]->[4,3,2]');
 
   const capped = loadPage({ localStorage: shared });
   capped.switchOn();
@@ -1008,7 +965,8 @@ const photosIn = async (response) => {
   await wait(50);
 
   t.check('unmoved: paging relearns the default and stays quiet about it',
-    !page.logs.some((l) => l.includes('has moved')) && shared.getItem('gmnx.pagingLayout') === null);
+    !page.logs.some((l) => l.startsWith('[GM-GALLERY] layout ok: rpc=hspqX size='))
+    && shared.getItem('gmnx.pagingLayout') === null);
 }
 
 // --- when the page size cannot be read --------------------------------------
@@ -1103,6 +1061,177 @@ const photosIn = async (response) => {
   t.check('there is no command that touches cookies',
     page.api()?.borrowPrivate === undefined && page.api()?.forget === undefined);
   t.check('the state gallery-ui reads is exposed', !!page.win.__GM_GALLERY__);
+}
+
+// --- lifecycle and conservative parsing regressions --------------------------
+const payloadOf = async (response) => {
+  const text = await response.text();
+  const match = [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)][0];
+  return match ? JSON.parse(JSON.parse(`"${match[1]}"`)) : null;
+};
+const flaggedReply = (token, first = 0, extra = {}) => {
+  const payload = JSON.parse(JSON.stringify(REPLY_CAPPED));
+  payload[0] = payload[0].map((entry, i) => [`LIFE${first + i}`, ...entry.slice(1)]);
+  payload[5] = longToken(token);
+  return frame('hspqX', Object.assign(payload, extra));
+};
+const requestForPlace = (body, place) => {
+  const outer = JSON.parse(new URLSearchParams(body).get('f.req'));
+  const args = JSON.parse(outer[0][0][1]);
+  args[2] = [place];
+  outer[0][0][1] = JSON.stringify(args);
+  return new URLSearchParams({ 'f.req': JSON.stringify(outer) }).toString();
+};
+const off = (page) => page.win.postMessage({
+  source: 'gm-native-maps', type: 'gm-settings', features: { photos: false }
+});
+{
+  const page = loadPage();
+  page.switchOn();
+  await page.receiveByRequest([flaggedReply('skip'), flaggedReply('A'), flaggedReply('B', 10)], askingFor(20));
+  await page.receiveByRequest([galleryReply(20, 80, 'C')], requestForPlace(askingFor(20), 'NEW_PLACE'));
+  t.check('SPA: new place replaces first-page totals and clears paging state',
+    page.outcomes()[0]?.serverTotal === 80 && page.paged().length === 0);
+  const next = await page.receiveByRequest([flaggedReply('D', 20)], requestForPlace(REQUEST_2, 'NEW_PLACE'));
+  t.check('SPA: previous place limited flag cannot alter new place follow-ups',
+    (await payloadOf(next))[15] === true && page.win.fetchCalls.length === 1);
+  await page.receiveByRequest([flaggedReply('skip', 100), flaggedReply('E', 100), flaggedReply('F', 110)], askingFor(20));
+  t.check('SPA: successful new gallery counts only its own supplied photos',
+    page.logs.at(-1).includes('uniqueSupplied=20'));
+  page.reply(galleryReply(1, 45), REQUEST_2);
+  t.check('viewer: opening one photo after gallery updates viewerOnly', page.win.__GM_GALLERY__.viewerOnly);
+  page.reply(galleryReply(10, 45), REQUEST_2);
+  t.check('viewer: gallery reply clears viewerOnly', !page.win.__GM_GALLERY__.viewerOnly);
+}
+{
+  for (const disable of [off, (page) => page.api().fillGrid(false)]) {
+    const page = loadPage();
+    page.switchOn();
+    // Promise-valued fixture text pauses the replay response until read.
+    const delayed = { then(resolve) { disable(page); resolve(flaggedReply('A')); } };
+    const response = await page.receiveByRequest([flaggedReply('skip'), delayed, flaggedReply('B', 10)], askingFor(20));
+    t.check('disable: in-flight replay passes original without another request or success log',
+      (await payloadOf(response))[0].length === 10 && page.win.fetchCalls.length === 2 && page.logs.length === 0);
+  }
+}
+{
+  const page = loadPage();
+  page.switchOn();
+  const delayed = { then(resolve) {
+    page.reply(galleryReply(20, 80), requestForPlace(askingFor(20), 'NEW_PLACE'));
+    resolve(flaggedReply('A'));
+  } };
+  await page.receiveByRequest([flaggedReply('skip'), delayed], askingFor(20));
+  t.check('SPA: pending old fill cannot overwrite new gallery or clear its flags',
+    page.outcomes()[0]?.serverTotal === 80 && page.logs.length === 0 && page.win.fetchCalls.length === 2);
+}
+{
+  const page = loadPage();
+  page.switchOn();
+  const result = await page.receiveByRequest([flaggedReply('skip'), flaggedReply('A'), flaggedReply('A', 10)], askingFor(20));
+  t.check('cursor: repeated cursor on full batch fails closed instead of handing Maps loop',
+    (await payloadOf(result))[0].length === 10 && page.win.fetchCalls.length === 3);
+}
+{
+  const page = loadPage();
+  page.switchOn();
+  const empty = JSON.parse(JSON.stringify(REPLY_CAPPED));
+  empty[0] = [];
+  empty[5] = null;
+  empty[10] = true;
+  const result = await page.receiveByRequest([flaggedReply('skip'), flaggedReply('A'), frame('hspqX', empty)], askingFor(20));
+  t.check('empty: first fill with no extra photos retains original reply', (await payloadOf(result))[5] === longToken('skip'));
+  await page.receiveByRequest([flaggedReply('skip'), flaggedReply('A'), flaggedReply('B', 10)], askingFor(20));
+  const last = await page.receiveByRequest([flaggedReply('skip', 20), flaggedReply('C', 20), frame('hspqX', empty)], REQUEST_2);
+  const payload = await payloadOf(last);
+  t.check('empty: terminal replay clears cursor and keeps end marker, only limited flag removed',
+    payload[0].length === 10 && payload[5] === null && payload[10] === true && payload[15] === null);
+}
+{
+  const page = loadPage();
+  page.switchOn();
+  const response = await page.receiveByRequest([
+    flaggedReply('skip', 0, { 11: true }), flaggedReply('A', 0, { 11: true }), flaggedReply('B', 10)
+  ], askingFor(20));
+  const payload = await payloadOf(response);
+  t.check('flags: ambiguous unknown booleans remain untouched', payload[11] === true && payload[15] === true);
+}
+{
+  for (const malformed of ['null', '[]', '"bad"', '{"hspqX":{"size":[],"token":[-1]}}', '{"hspqX":{"size":[4,2,1],"token":[4,2,1]}}']) {
+    const local = storage();
+    local.setItem('gmnx.pagingLayout', malformed);
+    local.setItem('gmnx.tokenSlot', '{"hspqX":-1}');
+    local.setItem('gmnx.normalFlags', '"15"');
+    const page = loadPage({ localStorage: local });
+    page.switchOn();
+    const response = await page.receiveByRequest([flaggedReply('skip'), flaggedReply('A'), flaggedReply('B', 10)], askingFor(20));
+    t.check(`storage: invalid metadata ${malformed} falls back safely`, (await payloadOf(response))[0].length === 20);
+  }
+}
+{
+  const page = loadPage();
+  page.switchOn();
+  const noisy = (token, first) => {
+    const payload = JSON.parse(JSON.stringify(REPLY_CAPPED));
+    payload[0] = payload[0].map((entry, i) => [`NOISE${first + i}`, ...entry.slice(1)]);
+    payload[0].push(['NOT_A_PHOTO', 'metadata']);
+    payload[5] = longToken(token);
+    return frame('hspqX', payload);
+  };
+  await page.receiveByRequest([noisy('skip', 0), noisy('A', 0), noisy('B', 10)], askingFor(20));
+  t.check('counts: non-image metadata IDs excluded from unique supplied photos',
+    page.logs.at(-1).includes('uniqueSupplied=20') && page.logs.at(-1).includes('deliveredBatch=21'));
+}
+{
+  const page = loadPage();
+  page.switchOn();
+  await page.receiveByRequest([flaggedReply('skip'), flaggedReply('A'), flaggedReply('B', 10)], askingFor(20));
+  const moved = (token, first) => flaggedReply(token, first, { 15: null, 17: true });
+  await page.receiveByRequest([moved('skip', 100), moved('C', 100), moved('D', 110)], askingFor(20));
+  const next = await page.receiveByRequest([moved('E', 120), moved('E', 120), moved('F', 130)], REQUEST_2);
+  const payload = await payloadOf(next);
+  t.check('SPA: same-place gallery reopening relearns only current limited slots',
+    payload[17] === null && page.logs.at(-1).includes('uniqueSupplied=40'));
+}
+{
+  const { capFlags } = loadPage().win.__GMX;
+  t.check('flags: two unknown true slots cannot identify cap', capFlags([true, true]).length === 0);
+  t.check('flags: normal true slot excluded before resolving cap', JSON.stringify(capFlags([true, true], [0])) === '[1]');
+}
+{
+  // UI test uses only photo scripts and a minimal real-grid DOM.
+  const listeners = [];
+  const values = new Map([['display', ['flex', 'important']]]);
+  const attributes = new Map();
+  const gate = {
+    style: { getPropertyValue: (key) => values.get(key)?.[0] || '', getPropertyPriority: (key) => values.get(key)?.[1] || '',
+      setProperty: (key, value, priority) => values.set(key, [value, priority]), removeProperty: (key) => values.delete(key) },
+    setAttribute: (key, value) => attributes.set(key, value), removeAttribute: (key) => attributes.delete(key),
+    hasAttribute: (key) => attributes.has(key), contains: () => false, querySelector: (selector) => selector === 'img' ? null : ({}),
+    querySelectorAll: () => [{}], getBoundingClientRect: () => ({ height: 100 }),
+    textContent: 'Sign in', innerHTML: '', isConnected: true
+  };
+  const grid = { children: [gate], parentElement: { children: [] } };
+  grid.parentElement.children = [grid];
+  const tiles = Array.from({ length: 5 }, () => ({ parentElement: grid,
+    style: { left: '1px', top: '1px', width: '1px', height: '1px', backgroundImage: 'url(https://lh3.googleusercontent.com/p)' } }));
+  const win = { addEventListener: (_, fn) => listeners.push(fn) };
+  const doc = { body: {}, querySelectorAll: () => tiles };
+  let disconnected = 0;
+  new Function('window', 'document', 'MutationObserver', read('photos/ui.js'))(win, doc,
+    class { observe() {} disconnect() { disconnected++; } });
+  const settings = (photos) => listeners.forEach((fn) => fn({ source: win,
+    data: { source: 'gm-native-maps', type: 'gm-settings', features: { photos } } }));
+  settings(true);
+  await wait(250);
+  t.check('UI: enabled hides qualifying prompt', values.get('display')[0] === 'none');
+  settings(false);
+  t.check('UI: disable restores original inline display and priority',
+    JSON.stringify(values.get('display')) === '["flex","important"]' && attributes.size === 0 && disconnected === 1);
+  settings(true);
+  settings(false);
+  await wait(250);
+  t.check('UI: disabling cancels queued cleanup', values.get('display')[0] === 'flex');
 }
 
 process.exit(t.done());

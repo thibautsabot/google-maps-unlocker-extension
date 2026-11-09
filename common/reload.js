@@ -1,23 +1,18 @@
-// Tabs waiting for a reload after a switch was changed.
-//
-// The panel closes when the user goes off to another tab, and starts again
-// when it reopens, so what is waiting is kept in storage, not in the panel.
-// A tab is cleared when its page says hello again, which it does on every
-// load, and when the tab closes.
-
+// Tabs waiting for a reload after a switch was changed. Clear on page hello
+// or tab removal. Keep the map schema for popups and existing installations.
 const RELOAD_PENDING_KEY = 'reloadPending';
+let reloadCleanup = Promise.resolve();
 
-async function forgetReloadPending(tabId) {
-  try {
+function forgetReloadPending(tabId) {
+  // Avoid lost deletions from overlapping events in this background context.
+  // Storage read/modify/write is not atomic across separate popup contexts.
+  reloadCleanup = reloadCleanup.then(async () => {
     const stored = await browser.storage.local.get(RELOAD_PENDING_KEY);
     const all = stored[RELOAD_PENDING_KEY];
     if (!all || !(tabId in all)) return;
 
     delete all[tabId];
     await browser.storage.local.set({ [RELOAD_PENDING_KEY]: all });
-  } catch (_) {}
+  }).catch(() => {});
+  return reloadCleanup;
 }
-
-handles(null, 'gm-hello', (msg, tabId) => { if (tabId != null) return forgetReloadPending(tabId); });
-
-onTabGone((tabId) => { forgetReloadPending(tabId); });

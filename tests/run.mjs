@@ -1,9 +1,7 @@
 // Runs every test file. No dependencies: node tests/run.mjs
 //
-// These exist because the extension cannot be tested by looking at it. Its
-// behaviour is a conversation between a page, a relay and a background
-// script, spread over reloads, and most of the bugs it has had were in the
-// conversation rather than in any one part.
+// Covers payload parsing, size-10 pagination, response framing, bundle
+// discovery, static wiring and background reload-prompt record cleanup.
 
 import { spawn } from 'node:child_process';
 import { readdirSync } from 'node:fs';
@@ -30,7 +28,7 @@ for (const file of files) {
       child.stdout.on('data', (chunk) => { held += chunk; });
       child.on('close', () => {
         process.stdout.write(held.split('\n')
-          .filter((l) => !l.startsWith('[GM-ROLL]') && !l.startsWith('[GM-GALLERY]'))
+          .filter((l) => !/^\[GM-(?:GALLERY|GALLERY-UI|REVIEWS|HOURS|NATIVE|RELAY)\]/.test(l))
           .join('\n'));
       });
     }

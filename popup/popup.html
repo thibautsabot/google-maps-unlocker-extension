@@ -19,7 +19,6 @@
   }
 
   .version {
-    grid-column: auto;
     font-weight: 400;
     opacity: 0.55;
   }
@@ -61,29 +60,14 @@
 
   button:hover { background: color-mix(in srgb, currentColor 14%, transparent); }
 
-  button[hidden], section[hidden] { display: none; }
-
-  dialog {
-    max-width: 340px;
-    border: 1px solid color-mix(in srgb, currentColor 25%, transparent);
-    border-radius: 10px;
-    color: CanvasText;
-    background: Canvas;
-    font: 13px/1.5 system-ui, sans-serif;
-  }
-
-  dialog::backdrop { background: rgb(0 0 0 / 55%); }
-  dialog h2 { margin: 0 0 8px; font-size: 15px; }
-  dialog p { opacity: 1; }
-  .dialog-actions { display: flex; gap: 8px; justify-content: flex-end; }
-  .dialog-actions button { width: auto; margin-top: 8px; }
+  button[hidden] { display: none; }
 </style>
 
 <h1>Unlocker <small class="version" id="version"></small></h1>
 
 <div id="features"></div>
 
-<p id="note">All off — the extension does nothing at all.</p>
+<p id="note">All features off.</p>
 
 <button id="reload" hidden>Reload this Maps tab</button>
 

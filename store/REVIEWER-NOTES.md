@@ -7,7 +7,8 @@ minified or obfuscated.
 
 Unlocker — for Google Maps™ changes how Google Maps behaves for a visitor who
 is not signed in. It has three switches in its toolbar panel. Each is off until the user
-turns it on. With all three off it does nothing.
+turns it on. Disabled features do not unlock or hide content; payload inspection
+and bundle discovery can still run.
 
 | Switch | What it does |
 |---|---|
@@ -17,15 +18,19 @@ turns it on. With all three off it does nothing.
 
 ## No cookies, no private windows
 
-The extension requests no `cookies` permission and no `incognito` access, reads
-and writes no cookie, and opens no window. An earlier version borrowed a
+The extension requests no `cookies` permission and no explicit private-window
+access, reads and writes no cookie, and opens no window. On update/startup it
+removes obsolete saved-session records from extension storage; Maps page loads
+also clear earlier research snapshots from page session storage. An earlier version borrowed a
 session from a private window; it was removed because it did not work.
 
-The photo switch changes one reply. Google gives a visitor who is not signed in
-10 photos on the first gallery page, with a "limited" mark that makes Maps stop
-asking for more. The extension requests the next pages from Google with the
-token that reply carried, appends their photos, clears the mark and hands Maps
-the longer list. It runs in the page and sends nothing anywhere but to Google.
+Google caps anonymous gallery replies at 10 photos, even when Maps asks for 20.
+The larger request can advance pagination past photos that were not returned.
+The extension replays capped requests in batches of 10 from the incoming
+cursor, follows Google's continuation tokens, and merges consecutive batches.
+It clears the limited mark so Maps keeps paging. Requests go only to Google;
+no login credentials are read, saved or modified. Research commands and token
+mutation helpers are not included in the package.
 
 ## Other permissions
 
@@ -36,8 +41,8 @@ the longer list. It runs in the page and sends nothing anywhere but to Google.
 
 ## Something a reviewer may notice
 
-The extension does one fetch of Google's own Maps JavaScript bundle (a URL
-already loaded by the page). It reads that text to learn how Google names a few
+The extension fetches matching Maps JavaScript bundles (URLs already loaded
+by the page), including dynamically added bundles. It reads that text to learn how Google names a few
 functions and labels this week, so it does not depend on names that change
 between releases. It never executes the fetched text and never sends it
 anywhere.
@@ -58,7 +63,8 @@ is declared as `none`.
 4. Turn on "Review search and filters". Open the Reviews tab: search, sort and
    the more-reviews button work with no sign-in prompt.
 5. Turn on "Full photos". Open a place with many photos and its gallery: the
-   first page shows 10, and scrolling keeps loading more. Console lines use
+   capped server replies are replaced by merged batches, normally 20 photos
+   initially, and scrolling keeps loading more. Console lines use
    `[GM-GALLERY]`.
 
 Source and tests: https://github.com/thibautsabot/google-maps-unlocker-extension

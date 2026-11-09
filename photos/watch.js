@@ -7,12 +7,16 @@
   // size Maps asked for, with the limited flag emptied, and Maps pages on from
   // there. Nothing leaves the page: no cookie is read, no reload, no message.
 
-  const { describe, askedFor, single, photoUrls, envelopes, learnLayout, DEFAULT_LAYOUT,
-    mergePages, frameReply, at, tokenSlot, learnTokenSlot, capFlags, trueSlots } = window.__GMX;
+  const { describe, askedFor, single, envelopes, learnLayout, DEFAULT_LAYOUT,
+    mergePages, frameReply, at, tokenSlot, learnTokenSlot, capFlags, trueSlots, isPhotoEntry } = window.__GMX;
+
+  // Remove obsolete per-tab data without affecting learned paging metadata.
+  try { sessionStorage.removeItem('gmnx.tokenSamples'); } catch (_) {}
+  try { sessionStorage.removeItem('gmnx.researchSnapshots'); } catch (_) {}
+  try { sessionStorage.removeItem('gmnx.galleryUrl'); } catch (_) {}
 
   const state = {
-    firstPage: null, serverTotal: null, asked: null, rpc: null, seen: 0, viewerOnly: false, paged: null,
-    bootstrapPhotos: null
+    firstPage: null, serverTotal: null, asked: null, rpc: null, seen: 0, viewerOnly: false, paged: null
   };
 
   const nativeFetch = window.fetch;
@@ -26,18 +30,28 @@
     const data = event.data;
     if (!data || data.source !== 'gm-native-maps') return;
     if (data.type !== 'gm-settings') return;
-    photosOn = !!data.features?.photos;
+    const enabled = !!data.features?.photos;
+    if (enabled !== photosOn) settingsEpoch++;
+    photosOn = enabled;
   });
-
-  const note = (...parts) => {
-    if (photosOn) console.log(LOG, ...parts);
-  };
 
   const LAYOUT_KEY = 'gmnx.pagingLayout';
 
-  const learned = (() => {
-    try { return JSON.parse(localStorage.getItem(LAYOUT_KEY) || '{}') || {}; } catch (_) { return {}; }
-  })();
+  const isIndex = (value) => Number.isSafeInteger(value) && value >= 0;
+  const isPath = (value) => Array.isArray(value) && value.length > 0 && value.length <= 12 && value.every(isIndex);
+  const validLayout = (value) => value && isPath(value.size) && isPath(value.token)
+    && JSON.stringify(value.size) !== JSON.stringify(value.token);
+  function storedMap(key, valid) {
+    const result = Object.create(null);
+    try {
+      const value = JSON.parse(localStorage.getItem(key) || '{}');
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        for (const [rpc, entry] of Object.entries(value)) if (valid(entry)) result[rpc] = entry;
+      }
+    } catch (_) {}
+    return result;
+  }
+  const learned = storedMap(LAYOUT_KEY, validLayout);
 
   // Where this RPC keeps its page size: the place a paging session taught,
   // or the place captured from real traffic until one does.
@@ -47,9 +61,7 @@
   // follow-up request that sent back a token from the previous reply, and
   // otherwise found by shape (read.js tokenSlot): the one long string.
   const TOKEN_KEY = 'gmnx.tokenSlot';
-  const tokenSlots = (() => {
-    try { return JSON.parse(localStorage.getItem(TOKEN_KEY) || '{}') || {}; } catch (_) { return {}; }
-  })();
+  const tokenSlots = storedMap(TOKEN_KEY, isIndex);
 
   // { index, value } of the token in a reply, or null when none stands out.
   function tokenOf(rpc, payload) {
@@ -61,14 +73,17 @@
     if (tokenSlots[rpc] === index) return;
     tokenSlots[rpc] = index;
     try { localStorage.setItem(TOKEN_KEY, JSON.stringify(tokenSlots)); } catch (_) {}
-    console.warn(LOG, `the next-page token in ${rpc} replies sits at [${index}] — learned from a session that paged`);
+    console.log(LOG, `layout ok: rpc=${rpc} tokenSlot=${index}`);
   }
 
   // Top-level slots that are true in replies that were not capped, so the
   // fill never clears one of them. Kept across loads.
   const NORMAL_KEY = 'gmnx.normalFlags';
   const normalFlags = (() => {
-    try { return new Set(JSON.parse(localStorage.getItem(NORMAL_KEY) || '[]')); } catch (_) { return new Set(); }
+    try {
+      const value = JSON.parse(localStorage.getItem(NORMAL_KEY) || '[]');
+      return new Set(Array.isArray(value) ? value.filter(isIndex) : []);
+    } catch (_) { return new Set(); }
   })();
   function rememberNormalFlags(payload) {
     const before = normalFlags.size;
@@ -85,8 +100,7 @@
 
     learned[rpc] = layout;
     try { localStorage.setItem(LAYOUT_KEY, JSON.stringify(learned)); } catch (_) {}
-    console.warn(LOG, `the page size in ${rpc} requests has moved from`
-      + ` [${was.size}] to [${layout.size}] — learned from a session that paged`);
+    console.log(LOG, `layout ok: rpc=${rpc} size=[${was.size}]->[${layout.size}] token=[${was.token}]->[${layout.token}]`);
   }
 
   // Maps puts several calls in one reply. Each gallery call looks like
@@ -103,9 +117,6 @@
   // --- the first gallery reply, then any page after it -----------------------
 
   let reportedFirst = false;
-  // The place card's preview has been reported, so it is reported once.
-  let previewTold = false;
-  let viewerLogged = false;
   let reportedFollowUp = false;
   let firstExchange = null;
 
@@ -131,27 +142,30 @@
   // from the grid, not an answer about paging. An empty page is the server
   // declining to continue.
   function onFollowUp(text, requestBody) {
-    if (reportedFollowUp || !state.rpc) return;
+    if (!state.rpc) return;
     learnFromFollowUp(requestBody);
 
     eachGalleryCall(text, (rpc, payload) => {
-      if (rpc !== state.rpc || single(payload)) return false;
+      if (rpc !== state.rpc) return false;
+      if (single(payload)) { state.viewerOnly = true; return true; }
+      const found = describe(payload);
+      if (found?.total !== null && found?.total <= found?.size) return true;
+      state.viewerOnly = false;
+      if (reportedFollowUp) return true;
 
       reportedFollowUp = true;
       const more = describe(payload);
       const photos = more ? more.size : 0;
       state.paged = photos;
 
-      note(photos
-        ? `a second page of ${photos} photos arrived, so this session can page`
-        : 'a second page came back empty, so this session is capped where it stands');
+      trace('gallery-page', { photos });
 
       return true;
     });
   }
 
-  // The first real gallery in this load. Once that has been reported, every
-  // later reply is a follow-up page instead.
+  // The first real reply of the current gallery. New place arguments or a
+  // recognized first-page request reset this before the reply is processed.
   function onFirstGallery(text, requestBody) {
     if (reportedFirst) {
       onFollowUp(text, requestBody);
@@ -163,12 +177,6 @@
       // is not a capped gallery, and one photo must not look like a failure.
       if (single(payload)) {
         state.viewerOnly = true;
-        if (!viewerLogged) {
-          viewerLogged = true;
-          note('this load opened a single photo, not the gallery.'
-            + ' Press Escape or use the back arrow to reach the grid, then scroll');
-
-        }
         return true;
       }
 
@@ -182,10 +190,6 @@
       // counted as a second page. It is skipped, and the gallery reply is read
       // when it comes.
       if (typeof found.total === 'number' && found.total <= found.size) {
-        if (!previewTold) {
-          previewTold = true;
-          note(`a preview of ${found.size} photos arrived; the gallery itself is judged when it is opened`);
-        }
         return true;
       }
 
@@ -194,7 +198,7 @@
     });
   }
 
-  // The first gallery reply of this load, reported once.
+  // The first gallery reply of the current gallery, reported once.
   function acceptFirst(rpc, payload, found, requestBody) {
     // Only this call's arguments are the page size. A batch holds other
     // calls, and the same slot in one of those is a different field.
@@ -211,64 +215,7 @@
     state.viewerOnly = false;
 
     reportedFirst = true;
-    note(`this session was served ${found.size} photos`
-      + (found.total ? ` of ${found.total}` : '')
-      + (asked ? `, having asked for ${asked}` : ', and what it asked for is unknown'));
-
-  }
-
-  // --- photos the page already has, before any gallery request ---------------
-  //
-  // An uncapped session often makes no gallery request at all: the photos
-  // arrived with the page. Counting only replies would report nothing exactly
-  // when everything is working.
-
-  // The request that carries the place's photos when Maps fetches them
-  // instead of embedding them in the HTML.
-  const isPlaceBootstrap = (url) => String(url).includes('/maps/preview/place');
-
-  let bootstrapReported = false;
-
-  // fromNetwork is the place payload Maps fetches when the gallery opens.
-  // The copy embedded in the HTML at load time carries two preview images
-  // and is not worth announcing on its own, so a smaller embedded count
-  // never replaces a larger one.
-  function notePagePhotos(distinct, fromNetwork) {
-    if (!fromNetwork && distinct.size <= (state.bootstrapPhotos ?? -1)) return;
-
-    if (fromNetwork) bootstrapReported = true;
-    state.bootstrapPhotos = distinct.size;
-    note(fromNetwork
-      ? `the place payload carried ${distinct.size} distinct photo URLs`
-      : `${distinct.size} distinct photo URLs on the page so far`);
-  }
-
-  // One network copy of the place data. A later copy is the same photos
-  // again, so it is not announced a second time.
-  function onPlacePayload(text) {
-    if (bootstrapReported) return;
-    notePagePhotos(photoUrls(text), true);
-  }
-
-  // On a hard load the place data is in the HTML, so there is no request to
-  // read and the hooks below never run. Navigating inside Maps fetches it
-  // instead, which is why this only matters on a fresh page load.
-  function readEmbeddedPlace() {
-    if (reportedFirst) return;
-
-    // Maps spreads the photos over several inline scripts and keeps adding
-    // them. Images already on screen count too: by then some exist only in
-    // the DOM.
-    const urls = new Set();
-
-    for (const script of document.querySelectorAll('script:not([src])')) {
-      for (const url of photoUrls(script.textContent || '')) urls.add(url);
-    }
-    for (const img of document.images) {
-      for (const url of photoUrls(img.src || '')) urls.add(url);
-    }
-
-    if (urls.size) notePagePhotos(urls, false);
+    trace('gallery-first', { served: found.size, total: found.total, asked });
   }
 
   // --- the scroll position Maps resets after a reply was handed over ---------
@@ -283,87 +230,51 @@
   //
   // Maps sends the gallery call by XHR. fetch is hooked the same way in case
   // that changes. The request is left to the browser; only the reply is read.
-  //
 
   // A batchexecute POST is where the gallery call travels.
   const isBatch = (url, body) =>
     typeof body === 'string' && String(url).includes('batchexecute');
 
-  function readReply(batch, text, requestBody, url = null) {
-    if (batch) sampleTokens(text);
-    if (batch) record(text, requestBody, url);
-    if (batch) onFirstGallery(text, requestBody);
-    else onPlacePayload(text);
-  }
-
-  // --- token samples, for working out what a continuation token is made of -----
-  //
-  // Each token a gallery reply hands out is kept as bytes, in this tab's
-  // session storage so that loads can be compared. GMGallery.tokens() reports
-  // which byte positions differ between them. The tokens themselves are never
-  // printed, only positions, and the bytes at positions that differ.
-  const SAMPLES_KEY = 'gmnx.tokenSamples';
-  const MAX_SAMPLES = 24;
-  const loadId = Math.random().toString(36).slice(2, 8);
-
-  const fromB64 = (text) => {
-    try {
-      const raw = atob(String(text).replace(/-/g, '+').replace(/_/g, '/'));
-      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
-    } catch (_) { return null; }
-  };
-  const toB64 = (bytes) => btoa(String.fromCharCode(...bytes));
-
-  const readSamples = () => {
-    try { return JSON.parse(sessionStorage.getItem(SAMPLES_KEY) || '[]') || []; } catch (_) { return []; }
-  };
-
-  function sampleTokens(text) {
-    const found = [];
+  let galleryKey = null;
+  let galleryEpoch = 0;
+  let settingsEpoch = 0;
+  function prepareGallery(text, body) {
     eachGalleryCall(text, (rpc, payload) => {
-      if (single(payload) || !describe(payload)) return false;
-      const token = tokenOf(rpc, payload)?.value;
-      const bytes = typeof token === 'string' ? fromB64(token) : null;
-      if (bytes) found.push(bytes);
+      const found = describe(payload);
+      if (single(payload) || !found || (found.total !== null && found.total <= found.size)) return false;
+      const args = argsOf(body, rpc);
+      const key = JSON.stringify([rpc, args?.[2] ?? null]);
+      const cursor = at(args, layoutFor(rpc).token);
+      const starts = (cursor === null || cursor === '') && askedFor(body, { rpc, layoutFor }) !== null;
+      if (galleryKey !== key || starts) {
+        galleryKey = key;
+        galleryEpoch++;
+        reportedFirst = false;
+        reportedFollowUp = false;
+        firstExchange = null;
+        clearedFlags.length = 0;
+        deliveredPhotos.clear();
+        handedOverAt = -Infinity;
+        Object.assign(state, { firstPage: null, serverTotal: null, asked: null, rpc: null,
+          seen: 0, viewerOnly: false, paged: null });
+      }
       return true;
     });
-    if (!found.length) return;
-
-    const samples = readSamples();
-    const known = new Set(samples.map((x) => x.b));
-    for (const bytes of found) {
-      const b = toB64(bytes);
-      if (known.has(b)) continue;
-      samples.push({ load: loadId, b });
-    }
-    try { sessionStorage.setItem(SAMPLES_KEY, JSON.stringify(samples.slice(-MAX_SAMPLES))); } catch (_) {}
+    return galleryEpoch;
   }
 
-  // Positions where two byte strings differ, with the bytes found there.
-  function byteDiff(a, b) {
-    const changed = [];
-    const length = Math.max(a.length, b.length);
-    for (let i = 0; i < length; i++) {
-      if (a[i] !== b[i]) {
-        changed.push([i, a[i] === undefined ? '--' : a[i].toString(16).padStart(2, '0'),
-          b[i] === undefined ? '--' : b[i].toString(16).padStart(2, '0')]);
-      }
-    }
-    return { lengths: [a.length, b.length], changed: changed.length, positions: changed.slice(0, 60) };
+  function readReply(text, requestBody, prepared = false) {
+    if (!prepared) prepareGallery(text, requestBody);
+    record(text, requestBody);
+    onFirstGallery(text, requestBody);
   }
 
-  // What each gallery exchange looked like, for working out why a session is
-  // capped when the reply is not the one expected. The shape only: lengths,
-  // types, the page size asked for and the first characters of any token.
-  // No photo URL is kept. Read it with GMGallery.capture().
+  // Shape-only diagnostics: lengths, types, counts and flags. No token
+  // content or photo URL is kept. Read them with GMGallery.capture().
   const recorded = [];
-  // The last gallery request and reply, kept whole in this variable and
-  // nowhere else. It holds the session and tokens of the request, so it is
-  // never logged and never leaves the page; probeNextPage() resends from it.
-  let lastExchange = null;
   const peek = (value) => {
     if (value === null || value === undefined) return null;
-    if (typeof value === 'string') return `string(${value.length}) ${value.slice(0, 10)}`;
+    if (typeof value === 'string') return `string(${value.length})`;
     if (Array.isArray(value)) return `array(${value.length})`;
     // Flags and counts are shown with their value: whether a reply says
     // "more pages exist" is exactly what a capture is read for.
@@ -371,26 +282,15 @@
     return typeof value;
   };
 
-  function record(text, requestBody, url = null) {
+  function record(text, requestBody) {
     try {
-      // Keep the exchange that announces the most photos. Maps also makes a
-      // small gallery call for the overview strip (asked for 4, total 2), and
-      // that one arrives after the grid and would otherwise replace it.
-      let announced = 0;
-      eachGalleryCall(text, (rpc, payload) => {
-        if (!single(payload) && Number.isSafeInteger(payload[1])) announced = Math.max(announced, payload[1]);
-        return false;
-      });
-      if (!lastExchange || announced >= lastExchange.announced) {
-        lastExchange = { body: requestBody || null, text, url, announced };
-      }
       const calls = [];
       eachGalleryCall(text, (rpc, payload) => {
         calls.push({
           rpc,
           length: payload.length,
           listLength: Array.isArray(payload[0]) ? payload[0].length : null,
-          total: payload[1],
+          total: typeof payload[1] === 'number' ? payload[1] : null,
           slots: payload.map((value, index) => [index, peek(value)]).filter(([, p]) => p !== null)
         });
         return false;
@@ -459,139 +359,181 @@
   // The slots the first fill emptied, so later pages get the same treatment.
   const clearedFlags = [];
 
+  // Unique image-bearing IDs in replies prepared for the current gallery.
+  // This measures supplied data, not rendered DOM tiles or Google's total.
+  const deliveredPhotos = new Set();
+  function logGalleryResult(action, rpc, payload, serverBatch, pages, flags, started) {
+    const details = describe(payload);
+    const list = details ? payload.find((value) => Array.isArray(value) && value.length === details.size
+      && value.some(isPhotoEntry)) : [];
+    for (const entry of list || []) {
+      if (isPhotoEntry(entry) && typeof entry[0] === 'string') deliveredPhotos.add(entry[0]);
+    }
+    const more = !!tokenOf(rpc, payload);
+    console.log(LOG, `${action} ok: serverBatch=${serverBatch} deliveredBatch=${details?.size ?? 0}`
+      + ` uniqueSupplied=${deliveredPhotos.size} announcedTotal=${details?.total ?? 'unknown'}`
+      + ` nextToken=${more ? 'present' : 'none'} serverPages=${pages} flagsCleared=${flags}`
+      + ` ms=${Math.round(performance.now() - started)}`);
+  }
+
   // Requests being filled, so a page fetched here is never filled again.
   const fillBusy = new Set();
 
-  // The pages after the first, fetched with the same request Maps made and
-  // the token each reply hands back. Returns the parsed payloads, in order.
-  async function laterPages(url, body, first, wantExtra = Infinity) {
-    const outer = JSON.parse(new URLSearchParams(body).get('f.req'));
-    const call = outer?.[0]?.find((c) => Array.isArray(c) && typeof c[1] === 'string');
+  // Replay the incoming cursor at size 10. The original size-20 response
+  // cannot be used: its next token advances past photos it never returned.
+  async function sizedPages(url, body, rpc, wanted, active) {
+    const params = new URLSearchParams(body);
+    const outer = JSON.parse(params.get('f.req'));
+    const call = outer?.[0]?.find((entry) => entry?.[0] === rpc);
+    if (!call || !Number.isInteger(wanted) || wanted < 1 || wanted > 100) return null;
     const args = JSON.parse(call[1]);
-    const layout = layoutFor(call[0]);
-    const slot = layout.token.slice(0, -1).reduce((n, i) => n?.[i], args);
-    if (!Array.isArray(slot)) return [];
-    const last = layout.token[layout.token.length - 1];
-
+    const layout = layoutFor(rpc);
+    const sizeSlot = at(args, layout.size.slice(0, -1));
+    const tokenSlot = at(args, layout.token.slice(0, -1));
+    if (!Array.isArray(sizeSlot) || !Array.isArray(tokenSlot)) return null;
+    const tokenIndex = layout.token.at(-1);
     const pages = [];
-    let payload = first;
-    let got = 0;
-    for (let n = 0; n < MAX_FILL_PAGES; n++) {
-      const token = tokenOf(call[0], payload)?.value;
-      if (typeof token !== 'string') break;
-
-      slot[last] = token;
+    const cursors = new Set();
+    let merged = null;
+    let lastToken = null;
+    let terminal = null;
+    for (let i = 0; i < MAX_FILL_PAGES; i++) {
+      if (!active()) return null;
+      const cursor = tokenSlot[tokenIndex] ?? null;
+      if (cursors.has(cursor)) return null;
+      cursors.add(cursor);
+      sizeSlot[layout.size.at(-1)] = Math.min(10, wanted - (describe(merged?.payload || [])?.size || 0));
       call[1] = JSON.stringify(args);
-      const params = new URLSearchParams(body);
-      params.set('f.req', JSON.stringify(outer));
-
+      params.set('f.req', JSON.stringify([[call]]));
       const response = await nativeFetch(url, {
-        method: 'POST',
-        credentials: 'include',
+        method: 'POST', credentials: 'include',
         headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
         body: params.toString()
       });
-      let next = null;
-      eachGalleryCall(await response.text(), (rpc, found) => {
-        if (rpc !== call[0] || single(found)) return false;
-        next = found;
+      if (response.status !== 200) return null;
+      const text = await response.text();
+      if (!active()) return null;
+      let payload = null;
+      eachGalleryCall(text, (name, value) => {
+        if (name !== rpc) return false;
+        payload = value;
         return true;
       });
-      const more = next ? describe(next) : null;
-      if (!more || !more.size) break;
-
-      pages.push(next);
-      payload = next;
-      got += more.size;
-      if (got >= wantExtra) break;
+      if (!payload) return null;
+      const found = describe(payload);
+      if (!found) {
+        // Google represents an exhausted photo list as null or []. Require
+        // gallery metadata and earlier photos so malformed replies still fail.
+        const empty = payload[0] === null || (Array.isArray(payload[0]) && payload[0].length === 0);
+        if (!empty || !merged || !Number.isSafeInteger(payload[1]) || payload[1] < 0) return null;
+        lastToken = null;
+        terminal = payload;
+        break;
+      }
+      const before = describe(merged?.payload || [])?.size || 0;
+      pages.push(payload);
+      merged = mergePages(pages);
+      const count = describe(merged?.payload || [])?.size || 0;
+      if (count <= before) return null;
+      lastToken = tokenOf(rpc, payload)?.value ?? null;
+      // Even a full merged batch must not hand Maps a cursor already used.
+      if (lastToken && cursors.has(lastToken)) return null;
+      if (!lastToken) terminal = payload;
+      if (count >= wanted || !lastToken) break;
+      tokenSlot[tokenIndex] = lastToken;
     }
-    return pages;
+    if (!merged) return null;
+    const firstToken = tokenOf(rpc, pages[0]);
+    if (firstToken) merged.payload[firstToken.index] = lastToken;
+    // End-of-list booleans belong to the terminal response, not page one.
+    if (terminal) for (const index of trueSlots(terminal)) merged.payload[index] = true;
+    return { payload: merged.payload, pages: pages.length };
   }
 
   // The reply Maps should read: the first page with the later pages' photos
   // appended. Null whenever there is nothing to improve or anything fails, in
   // which case the original reply goes through untouched.
-  async function filledReply(url, body, text) {
+  async function filledReply(url, body, text, active) {
+    const started = performance.now();
+    let attempted = false;
+    const fail = (reason) => {
+      if (!active()) return null;
+      trace('fill-failed', { reason, durationMs: Math.round(performance.now() - started) });
+      console.warn(LOG, `fill failed: ${reason}; ms=${Math.round(performance.now() - started)}`);
+      return null;
+    };
     try {
       let first = null;
       let rpc = null;
       eachGalleryCall(text, (name, payload) => {
-        if (single(payload) || !describe(payload)) return false;
+        const found = describe(payload);
+        if (single(payload) || !found || (found.total !== null && found.total <= found.size)) return false;
         first = payload;
         rpc = name;
         return true;
       });
-      // Each refusal says why. fillGrid(true) was asked for, so staying
-      // silent would look the same as not having run at all.
-      const decline = (why) => { console.log(LOG, `fill: left the reply as it is, ${why}`); return null; };
+      if (!first) return null;
 
-      if (!first) return decline('no gallery list in it');
-
-      // A request that already carries a token is Maps asking for a later
-      // page by itself, which it only does once the first reply let it. Those
-      // replies are left alone: filling them as well asked the server for a
-      // second page each time and doubled the traffic.
+      // Follow-up requests keep Maps' incoming cursor, but short responses
+      // are replayed at size 10 before their cursor can skip unseen photos.
       const asking = envelopes(body).find((entry) => entry.rpc === rpc);
       const sentToken = asking ? at(asking.args, layoutFor(rpc).token) : null;
       if (typeof sentToken === 'string' && sentToken) {
         // The server sets the limited flag on every page it serves, so a page
         // left as it came would stop Maps after one more. The same slots the
-        // first fill emptied are emptied here, and nothing is fetched. Only
-        // those: the last page has an end marker that must stay.
+        // first fill emptied are emptied here. Only those: the last page has
+        // an end marker that must stay.
         const stuck = clearedFlags.filter((index) => first[index] === true);
-        if (!stuck.length) return decline('this is a follow-up page Maps asked for itself');
+        if (!stuck.length) return null;
+        attempted = true;
 
         // A capped session serves 10 where Maps asked for 20. The first fill
-        // handed over exactly 20; a follow-up left short makes Maps redraw
-        // the grid, which showed as the scroll jumping to the top. So the
-        // next server page is merged in until the page is the size asked for.
+        // hands over up to 20. Replay this incoming cursor at size 10, then
+        // merge consecutive server pages without reusing the skipped cursor.
         const own = describe(first);
         const wanted = askedFor(body, { rpc, served: own.size, layoutFor });
         let merged = { payload: first.slice(), added: 0 };
-        if (typeof wanted === 'number' && own.size < wanted && tokenOf(rpc, first)) {
-          const more = await laterPages(url, body, first, wanted - own.size);
-          const joined = more.length ? mergePages([first, ...more]) : null;
-          if (joined && joined.added) {
-            merged = joined;
-            merged.payload[tokenOf(rpc, first).index] = tokenOf(rpc, more[more.length - 1])?.value ?? null;
-          }
+        let serverPages = 0;
+        if (typeof wanted === 'number' && wanted > 10 && own.size < wanted) {
+          const replay = await sizedPages(url, body, rpc, wanted, active);
+          if (!replay) return fail('size-10 replay failed');
+          merged = { payload: replay.payload, added: describe(replay.payload).size - own.size };
+          serverPages = replay.pages;
         }
         for (const index of stuck) merged.payload[index] = null;
         trace('follow-up', { own: own.size, joined: merged.added, handedOver: own.size + merged.added });
-        console.log(LOG, `fill: follow-up page, cleared the limited flag at [${stuck.join(', ')}]`
-          + (merged.added ? `, and joined the next page: ${own.size} photos became ${own.size + merged.added}` : ''));
-        return frameReply(rpc, merged.payload, text);
+        const framed = frameReply(rpc, merged.payload, text);
+        logGalleryResult('page', rpc, merged.payload, own.size, serverPages, stuck.length, started);
+        return framed;
       }
       const firstToken = tokenOf(rpc, first);
-      if (!firstToken) return decline('it carries no continuation token');
+      if (!firstToken) return null;
 
       const found = describe(first);
       const asked = askedFor(body, { rpc, served: found.size, layoutFor });
 
       // Capped means the server sent fewer photos than were asked for while
       // announcing more. Without the page size nothing is claimed.
-      if (typeof asked !== 'number') return decline('the page size asked for could not be read');
+      if (typeof asked !== 'number') return null;
       if (!(typeof found.total === 'number' && found.total > found.size && found.size < asked)) {
         // A reply that is not capped shows which true slots are ordinary.
         rememberNormalFlags(first);
-        return decline(`not capped (${found.size} served of ${found.total}, asked for ${asked})`);
+        return null;
       }
 
-      const started = performance.now();
-      const more = await laterPages(url, body, first, asked - found.size);
+      attempted = true;
+      const replay = await sizedPages(url, body, rpc, asked, active);
       const took = Math.round(performance.now() - started);
-      trace('fill', { pages: more.length, ms: took });
-      if (!more.length) return decline('the server gave no further page');
-
-      const merged = mergePages([first, ...more]);
-      if (!merged || !merged.added) return decline('the further pages added no new photo');
+      if (!replay) return fail('size-10 replay failed');
+      const merged = { payload: replay.payload, added: describe(replay.payload).size - found.size };
+      trace('fill', { pages: replay.pages, durationMs: took, serverPageSize: 10 });
+      if (merged.added <= 0) return fail('further pages added no photos');
 
       // An uncapped session answers with exactly the page size asked for and
       // the token for the page after it, and Maps pages on from there. The
       // same is done here: the list stops where the pages used stop, and the
-      // token is the last page's, not the first's. 'all' keeps the old
-      // behaviour, the whole list at once, for comparison.
-      merged.payload[firstToken.index] = tokenOf(rpc, more[more.length - 1])?.value ?? null;
+      // token is the last size-10 page's, not the original size-20 cursor.
+      // sizedPages already installed the last size-10 response's cursor.
 
       // The capped reply carries true in slot 15, which the uncapped first
       // page does not have at all. While it is set Maps does not ask for the
@@ -600,17 +542,12 @@
       const cleared = capFlags(first, [...normalFlags]);
       for (const index of cleared) merged.payload[index] = null;
       for (const index of cleared) if (!clearedFlags.includes(index)) clearedFlags.push(index);
-      if (cleared.length) console.log(LOG, `fill: cleared the limited flag at [${cleared.join(', ')}]`);
-
-      // Said whether or not the photos switch is on: this runs only when
-      // fillGrid(true) asked for it, so the log is the answer to that ask.
-      console.log(LOG, `the grid was filled from ${more.length} more pages: ${found.size} photos became`
-        + ` ${found.size + merged.added}, and Maps waited ${took} ms for it`);
-
-      return frameReply(rpc, merged.payload, text);
-    } catch (error) {
-      console.warn(LOG, 'could not fill the grid, leaving the reply as it is', error?.message || error);
-      return null;
+      const framed = frameReply(rpc, merged.payload, text);
+      deliveredPhotos.clear();
+      logGalleryResult('fill', rpc, merged.payload, found.size, replay.pages, cleared.length, started);
+      return framed;
+    } catch (_) {
+      return attempted ? fail('paging or framing failed') : null;
     }
   }
 
@@ -626,15 +563,17 @@
       ? fetchBody(input, init)
       : Promise.resolve(direct);
 
-    const bootstrap = isPlaceBootstrap(url);
     const response = nativeFetch.apply(this, arguments);
-    if (!wantsBody && !bootstrap) return response;
+    if (!wantsBody) return response;
 
     return response.then(async (res) => {
       try {
         const body = await bodyPromise;
-        const batch = isBatch(url, body);
+        if (!isBatch(url, body)) return res;
         const text = await res.clone().text();
+        const epoch = prepareGallery(text, body);
+        const settings = settingsEpoch;
+        const active = () => fillOn() && galleryEpoch === epoch && settingsEpoch === settings;
 
         // What the page's own reading sees: the server's reply, or the
         // longer one handed to Maps in its place.
@@ -642,18 +581,16 @@
         const report = (reply) => {
           if (reported) return;
           reported = true;
-          readReply(batch, reply, body, url);
+          if (galleryEpoch === epoch) readReply(reply, body, true);
         };
 
         // The capped first page is replaced by a fuller one when asked for.
         // Anything that goes wrong leaves the original response in place.
-        if (batch && fillOn() && !fillBusy.has(url)) {
-          console.log(LOG, 'fill: a gallery reply arrived, checking whether it is capped');
+        if (res.status === 200 && fillOn() && !fillBusy.has(url)) {
           fillBusy.add(url);
           try {
-            const filled = await filledReply(url, body, text);
-            if (filled) {
-              console.log(LOG, `fill: handing Maps a longer list (${filled.length} chars)`);
+            const filled = await filledReply(url, body, text, active);
+            if (filled && active()) {
               report(filled);
               handedOverAt = performance.now();
               return replaceResponse(res, filled);
@@ -683,14 +620,13 @@
   proto.send = function gallerySend(body) {
     const url = this.__gm;
     const batch = url && isBatch(url, body);
-    const bootstrap = url && !batch && isPlaceBootstrap(url);
 
-    if (batch || bootstrap) {
+    if (batch) {
       const xhr = this;
       xhr.addEventListener('loadend', () => {
         try {
           if (xhr.status !== 200 || (xhr.responseType && xhr.responseType !== 'text')) return;
-          readReply(batch, xhr.responseText, body, url);
+          readReply(xhr.responseText, body);
         } catch (_) {}
       });
     }
@@ -709,6 +645,7 @@
     fillGrid: (on) => {
       if (on === undefined) return fillOn() ? 'on' : 'off';
       const value = on === true ? '1' : (on === 'auto' ? null : '0');
+      settingsEpoch++;
       try {
         if (value === null) sessionStorage.removeItem(FILL_KEY);
         else sessionStorage.setItem(FILL_KEY, value);
@@ -718,226 +655,14 @@
     },
 
     // The shape of each gallery request and reply seen on this page, with no
-    // photo URLs in it. For reading what a session was actually given.
+    // photo URLs or token content in it.
     capture: () => JSON.parse(JSON.stringify(recorded)),
-
-    // What differs between the continuation tokens this tab has been handed:
-    // consecutive pages of one load, and the same page across loads. Reports
-    // lengths and byte positions with the bytes found there, never a token.
-    // Open the gallery, scroll a few pages, reload and do it again.
-    tokens: () => {
-      const samples = readSamples().map((x) => ({ load: x.load, bytes: Uint8Array.from(atob(x.b), (c) => c.charCodeAt(0)) }));
-      if (samples.length < 2) return `${samples.length} token seen: open the gallery and scroll, then ask again`;
-
-      const nonZero = (bytes) => [...bytes].filter(Boolean).length;
-      const out = {
-        tokens: samples.length,
-        loads: [...new Set(samples.map((x) => x.load))].length,
-        sizes: samples.map((x) => `${x.bytes.length}b/${nonZero(x.bytes)} set`),
-        betweenPages: [],
-        acrossLoads: []
-      };
-
-      for (let i = 1; i < samples.length; i++) {
-        const entry = { from: i, to: i + 1, ...byteDiff(samples[i - 1].bytes, samples[i].bytes) };
-        if (samples[i - 1].load === samples[i].load) out.betweenPages.push(entry);
-      }
-
-      const firsts = new Map();
-      for (const [i, x] of samples.entries()) if (!firsts.has(x.load)) firsts.set(x.load, i);
-      const starts = [...firsts.values()];
-      for (let k = 1; k < starts.length; k++) {
-        out.acrossLoads.push({ comparing: `first token of load ${k} and load ${k + 1}`,
-          ...byteDiff(samples[starts[k - 1]].bytes, samples[starts[k]].bytes) });
-      }
-      return JSON.parse(JSON.stringify(out));
-    },
-
-    // Forgets the token samples, for starting a clean comparison.
-    forgetTokens: () => { try { sessionStorage.removeItem(SAMPLES_KEY); } catch (_) {} return 'cleared'; },
 
     // What happened since the page began: errors, rejections, clicks and
     // batchexecute calls, each with a time in milliseconds. Messages are cut
     // short and no URL, token or photo is kept.
-    trace: () => JSON.parse(JSON.stringify(traced)),
-
-    // Follows the continuation tokens page after page, the way scrolling the
-    // grid does, and reports how many photos each page added that earlier
-    // pages did not have. For finding out whether a session that is cut to
-    // ten per page can still be walked to the end. Photo ids are compared and
-    // counted here; none of them, and no token or URL, is returned.
-    probeAllPages: async ({ maxPages = 15 } = {}) => {
-      if (!lastExchange?.body) return 'no gallery request seen yet: open the Photos grid first';
-
-      let params;
-      let outer;
-      try {
-        params = new URLSearchParams(lastExchange.body);
-        outer = JSON.parse(params.get('f.req'));
-      } catch (_) { return 'the last request could not be read'; }
-
-      const call = outer?.[0]?.find((c) => Array.isArray(c) && typeof c[1] === 'string');
-      if (!call) return 'the last request had no gallery call';
-
-      let args;
-      try { args = JSON.parse(call[1]); } catch (_) { return 'the last request arguments could not be read'; }
-
-      const layout = layoutFor(call[0]);
-      const slot = layout.token.slice(0, -1).reduce((n, i) => n?.[i], args);
-      if (!Array.isArray(slot)) return 'the token slot is not where the layout says';
-      const last = layout.token[layout.token.length - 1];
-
-      const url = lastExchange.url
-        || `${location.origin}/maps/_/MapsWizUi/data/batchexecute?rpcids=${call[0]}&hl=en&rt=c`;
-
-      const idOf = (entry) => (Array.isArray(entry) && typeof entry[0] === 'string' ? entry[0] : null);
-      const galleryOf = (text) => {
-        let found = null;
-        eachGalleryCall(text, (rpc, payload) => {
-          if (rpc !== call[0] || single(payload)) return false;
-          found = payload;
-          return true;
-        });
-        return found;
-      };
-      // The photo list is the slot with the most entries that carry a URL:
-      // the same rule describe() uses. Only the ids of those entries are kept.
-      const hasUrl = (entry) => Array.isArray(entry) && JSON.stringify(entry).includes('googleusercontent');
-      const idsOf = (payload) => {
-        if (!payload) return [];
-        let best = [];
-        for (const value of payload) {
-          if (!Array.isArray(value) || !value.length) continue;
-          const withUrl = value.filter(hasUrl);
-          if (withUrl.length > best.length) best = withUrl;
-        }
-        return best.map(idOf).filter(Boolean);
-      };
-
-      // Page one is what Maps already fetched.
-      let payload = galleryOf(lastExchange.text);
-      const seen = new Set(idsOf(payload));
-      const pages = [{ page: 1, got: seen.size, added: seen.size, status: 200, total: payload?.[1] ?? null }];
-
-      for (let page = 2; page <= maxPages; page++) {
-        const token = tokenOf(call[0], payload)?.value;
-        if (typeof token !== 'string') { pages.push({ page, stoppedBecause: 'no token to follow' }); break; }
-
-        slot[last] = token;
-        call[1] = JSON.stringify(args);
-        params.set('f.req', JSON.stringify(outer));
-
-        let response;
-        let text;
-        try {
-          response = await nativeFetch(url, {
-            method: 'POST',
-            credentials: 'include',
-            headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-            body: params.toString()
-          });
-          text = await response.text();
-        } catch (error) {
-          pages.push({ page, stoppedBecause: `request failed: ${error?.message || error}` });
-          break;
-        }
-
-        payload = galleryOf(text);
-        if (!payload) { pages.push({ page, status: response.status, stoppedBecause: 'no gallery frame in the reply' }); break; }
-
-        const ids = idsOf(payload);
-        const fresh = ids.filter((id) => !seen.has(id));
-        ids.forEach((id) => seen.add(id));
-        pages.push({ page, got: ids.length, added: fresh.length, status: response.status, total: payload[1] ?? null });
-
-        if (!fresh.length) { pages[pages.length - 1].stoppedBecause = 'a page added nothing new'; break; }
-      }
-
-      return {
-        pages,
-        distinctPhotos: seen.size,
-        announcedTotal: payload?.[1] ?? pages[0].total
-      };
-    },
-
-    // Asks the server for the page after the one last seen, using the token
-    // that page handed back, the way Maps does when the grid is scrolled. For
-    // finding out whether a capped session will serve a second page at all.
-    // Resends one request of Maps' own, adds nothing else, and reports only
-    // the shape of what comes back.
-    probeNextPage: async () => {
-      if (!lastExchange?.body) return 'no gallery request seen yet: open the Photos grid first';
-
-      const params = new URLSearchParams(lastExchange.body);
-      let outer;
-      try { outer = JSON.parse(params.get('f.req')); } catch (_) { return 'the last request could not be read'; }
-
-      const call = outer?.[0]?.find((c) => Array.isArray(c) && typeof c[1] === 'string');
-      if (!call) return 'the last request had no gallery call';
-
-      let args;
-      let reply = null;
-      try { args = JSON.parse(call[1]); } catch (_) { return 'the last request arguments could not be read'; }
-      eachGalleryCall(lastExchange.text, (rpc, payload) => {
-        if (rpc === call[0] && !single(payload)) { reply = payload; return true; }
-        return false;
-      });
-
-      const layout = layoutFor(call[0]);
-      const token = tokenOf(call[0], reply || [])?.value;
-      if (typeof token !== 'string') return 'the last reply carried no continuation token';
-
-      // Same request, token put where Maps puts it for the next page.
-      let node = args;
-      for (const index of layout.token.slice(0, -1)) node = node?.[index];
-      if (!Array.isArray(node)) return 'the token slot is not where the layout says';
-      node[layout.token[layout.token.length - 1]] = token;
-
-      call[1] = JSON.stringify(args);
-      params.set('f.req', JSON.stringify(outer));
-
-      const url = lastExchange.url || `${location.origin}/maps/_/MapsWizUi/data/batchexecute?rpcids=${call[0]}&hl=en&rt=c`;
-      const response = await nativeFetch(url, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'content-type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-        body: params.toString()
-      });
-      const text = await response.text();
-
-      let next = null;
-      eachGalleryCall(text, (rpc, payload) => {
-        if (rpc !== call[0]) return false;
-        next = payload;
-        return true;
-      });
-
-      return {
-        status: response.status,
-        bytes: text.length,
-        gotGalleryFrame: !!next,
-        list: Array.isArray(next?.[0]) ? next[0].length : null,
-        total: next?.[1] ?? null,
-        nextToken: peek(next ? tokenOf(call[0], next)?.value : null),
-        head: next ? null : text.slice(0, 120)
-      };
-    }
+    trace: () => JSON.parse(JSON.stringify(traced))
   };
-
-  // The state grows as Maps writes it. One early read reports a fraction.
-  // Several passes: Maps writes the embedded state while the document is
-  // still parsing, and one early read catches a fraction of the photos.
-  const readWhenReady = () => {
-    for (const delay of [0, 400, 1200, 2500, 5000]) {
-      setTimeout(() => { try { readEmbeddedPlace(); } catch (_) {} }, delay);
-    }
-  };
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', readWhenReady, { once: true });
-  } else {
-    readWhenReady();
-  }
 
   // --- what happens when the gallery is opened ------------------------------
   //
@@ -980,7 +705,7 @@
     // had is put back. A user dragging the scrollbar changes no height.
     const grew = now.height > was.height;
     const soon = performance.now() - handedOverAt < RESTORE_WINDOW_MS;
-    if (grew && soon) {
+    if (grew && soon && fillOn()) {
       try { el.scrollTop = was.top; } catch (_) {}
       lastScroll.set(el, { top: was.top, height: now.height });
       trace('scroll-restored', { from: now.top, to: was.top, heightBefore: was.height, heightAfter: now.height });
@@ -1013,6 +738,4 @@
     seenCall(typeof input === 'string' ? input : input?.url, 'fetch');
     return tracedFetch.apply(this, arguments);
   };
-
-  console.debug(LOG, 'watching the gallery RPC');
 })();

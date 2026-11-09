@@ -1,1 +1,0 @@
-const LOG = '[GM]';

@@ -98,8 +98,17 @@ export const shifted = (body) => {
   return new URLSearchParams({ 'f.req': JSON.stringify(outer) }).toString();
 };
 
-// Framed the way batchexecute frames it.
+// Independent server-side fixture encoding: Google escapes these characters,
+// but leaves slashes and other Unicode intact, in both nested JSON layers.
+const escapes = {
+  '<': '\\u003c', '>': '\\u003e', '&': '\\u0026', '=': '\\u003d',
+  '\u2028': '\\u2028', '\u2029': '\\u2029'
+};
+export const serverJson = (value) => JSON.stringify(value).replace(/[<>&=\u2028\u2029]/g, (char) => escapes[char]);
+
+// Length covers the complete envelope's UTF-8 bytes plus two, not the payload.
+// The final chunk has no trailing newline.
 export const frame = (rpc, payload) => {
-  const text = JSON.stringify(payload);
-  return `)]}'\n\n${text.length}\n[["wrb.fr","${rpc}",${JSON.stringify(text)},null,null,null,"generic"]]`;
+  const envelope = serverJson([['wrb.fr', rpc, serverJson(payload), null, null, null, 'generic']]);
+  return `)]}'\n\n${new TextEncoder().encode(envelope).length + 2}\n${envelope}`;
 };

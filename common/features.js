@@ -11,7 +11,7 @@ const FEATURES = [
   },
   {
     id: 'photos',
-    label: 'Full photos and reviews',
+    label: 'Full photos',
     note: 'Shows the photos Google keeps back when you are not signed in, '
       + 'and keeps the gallery loading as you scroll.'
   }
@@ -20,8 +20,3 @@ const FEATURES = [
 const FEATURES_OFF = Object.fromEntries(FEATURES.map((f) => [f.id, false]));
 
 const FEATURES_KEY = 'features';
-
-const featureOn = async (name) => {
-  const stored = await browser.storage.local.get(FEATURES_KEY);
-  return !!stored[FEATURES_KEY]?.[name];
-};

@@ -40,9 +40,6 @@ const m = manifest();
 // --- one shared scope, so nothing may be declared twice --------------------
 for (const [label, files] of [['background', BACKGROUND_FILES()], ['page', PAGE_FILES()]]) {
   const combined = files.map(read).join('\n');
-  const names = [...combined.matchAll(/^\s*(?:const|let|var|async function|function)\s+(\w+)/gm)]
-    .map((x) => x[1]);
-
   // Page scripts are each wrapped in their own IIFE, so only their top
   // level would clash; the background files share one scope outright.
   const top = label === 'background'
@@ -59,7 +56,6 @@ for (const [label, files] of [['background', BACKGROUND_FILES()], ['page', PAGE_
     console.log(`        ${label} fails when concatenated:`, error.message);
   }
   t.check(`${label}: the files parse together as the browser loads them`, parses);
-  void names;
 }
 
 // --- the extension has no way to touch cookies ------------------------------
@@ -75,12 +71,18 @@ for (const [label, files] of [['background', BACKGROUND_FILES()], ['page', PAGE_
 
   t.check('no cookies permission is requested', !m.permissions.includes('cookies'));
   t.check('no private-window access is requested', m.incognito === undefined);
-  t.check('no code reads or writes cookies', !/browser\.cookies|chrome\.cookies/.test(everything));
+  t.check('no code reads or writes cookies', !/browser\.cookies|chrome\.cookies|document\.cookie\b/.test(everything));
   t.check('no code opens a private window', !/windows\.create|incognito/i.test(everything));
   t.check('no consent dialog is left in the popup', !read('popup/popup.html').includes('cookie-consent'));
   t.check('the only permission is storage', m.permissions.length === 1 && m.permissions[0] === 'storage');
 
   const page = PAGE_FILES().map(read).join('\n');
+  t.check('research commands and token mutation helpers are not shipped',
+    !/researchSuite|researchReplay|researchCredentials|probeTokenPosition|probeAllPages|probeNextPage|mutateTokenPosition|resetTokenField|replaceTokenField|sampleTokens/.test(page));
+  t.check('unused swap toast is not shipped', !/gm-toast|GMGalleryToast/.test(page));
+  t.check('legacy page research storage is cleared without retaining raw exchanges',
+    page.includes('gmnx.researchSnapshots') && page.includes('gmnx.tokenSamples')
+      && page.includes('sessionStorage.removeItem') && !/lastExchange|RESEARCH_KEY|SAMPLES_KEY/.test(page));
   const sent = [...page.matchAll(/(?:tell|ask)\(\s*(?:\{\s*type:\s*)?'([\w-]+)'/g)].map((x) => x[1]);
   t.check('the page scripts send nothing to the background', sent.length === 0);
   if (sent.length) console.log('        sends:', [...new Set(sent)].join(', '));
@@ -89,8 +91,10 @@ for (const [label, files] of [['background', BACKGROUND_FILES()], ['page', PAGE_
 // --- the background only clears the reload prompt ---------------------------
 {
   const background = BACKGROUND_FILES().map(read).join('\n');
-  const handled = [...background.matchAll(/handles\([^,]+, '([\w-]+)'/g)].map((x) => x[1]);
+  const handled = [...background.matchAll(/msg\?\.type === '([\w-]+)'/g)].map((x) => x[1]);
   t.check('the background answers the hello and nothing else', handled.length === 1 && handled[0] === 'gm-hello');
+  t.check('background needs no feature catalogue or generic registry',
+    !BACKGROUND_FILES().includes('common/features.js') && !/HANDLERS|TAB_GONE|featureOn\(/.test(background));
 }
 
 // --- the background must not touch the DOM ---------------------------------
@@ -114,11 +118,13 @@ for (const [label, files] of [['background', BACKGROUND_FILES()], ['page', PAGE_
   t.check('popup Maps URL helper accepts localized Maps hosts',
     checker('https://www.google.fr/maps/place/X')
       && checker('https://maps.google.co.uk/maps/place/X')
-      && checker('https://www.google.co.jp/maps'));
+      && checker('https://www.google.co.jp/maps/'));
   t.check('popup Maps URL helper rejects non-Maps and lookalike hosts',
     !checker('https://www.google.fr/search?q=maps')
       && !checker('https://google.fr.evil.example/maps')
       && !checker('https://maps.google.com.evil.example/maps'));
+  t.check('popup recognition matches content-script path scope',
+    !checker('https://www.google.com/maps') && !checker('https://www.google.com/Maps/'));
   t.check('localized hosts include google.fr, google.de and multi-label google.co.uk',
     hosts.includes('google.fr') && hosts.includes('google.de') && hosts.includes('google.co.uk'));
   t.check('every Maps match has a corresponding Google host permission',
@@ -143,21 +149,6 @@ for (const [label, files] of [['background', BACKGROUND_FILES()], ['page', PAGE_
   const unlisted = folders.filter((d) => !listed.includes(d));
   t.check('every feature folder is in the catalogue', unlisted.length === 0);
   if (unlisted.length) console.log('        not in the catalogue:', unlisted.join(', '));
-}
-
-// --- every message handled belongs to a registered feature -----------------
-{
-  const background = BACKGROUND_FILES().map(read).join('\n');
-  const registered = [...background.matchAll(/handles\((null|'(\w+)')/g)].map((x) => x[2] ?? null);
-  const catalogue = read('common/features.js');
-  const known = [...catalogue.matchAll(/id: '(\w+)'/g)].map((x) => x[1]);
-
-  const strangers = [...new Set(registered.filter((f) => f && !known.includes(f)))];
-  t.check('handlers are registered against features that exist', strangers.length === 0);
-  if (strangers.length) console.log('        unknown feature:', strangers.join(', '));
-
-  t.check('the dispatcher names no feature of its own',
-    !/'(photos|hours)'/.test(read('common/dispatch.js')));
 }
 
 // --- package names use version placeholders --------------------------------

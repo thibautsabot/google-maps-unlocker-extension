@@ -21,25 +21,34 @@ hours with the page. When that happens the extension asks for the place again
 and hands Maps the full reply, so nothing reloads and no cookie is touched.
 
 ### Review search and filters
-Search the reviews, sort them, open the full list.
+Search and sort reviews, and open the review list without the sign-in prompt.
+Reviews Google does not send cannot be recovered by removing the prompt.
 
 ### Full photos
 Without signing in, Google gives the first page of a gallery 10 photos and
 marks the list as limited. It still serves the pages after it when asked, but
 Maps stops asking.
 
-The extension asks for those pages itself, using the token Google already sent
-with the first page, merges them, and hands Maps the longer list with the
-"limited" mark cleared. Maps then keeps loading photos as you scroll. Nothing
-reloads, no cookie is touched, and nothing is sent anywhere but to Google.
+The extension replays capped requests in batches of 10 and follows Google's
+continuation tokens. Asking for 20 can advance past photos Google did not
+return. It merges consecutive batches and clears the "limited" mark so Maps
+keeps loading as you scroll. Nothing reloads, no cookie is touched, and requests
+go only to Google.
 
 **What to expect.**
-- A large place goes from 10 photos to about 58. That is as far as Google
-  serves a visitor who is not signed in, whatever the place announces.
+- A signed-out test recovered 108 distinct photos where size-20 requests
+  recovered 58, matching the signed-in gallery count. Google's announced total
+  can differ from the number of pageable photos.
 - The token and the "limited" mark are found by their shape in Google's reply
   rather than by fixed position, so small layout changes do not break it.
 - Google redesigns Maps now and then. A big change can break this until the
   extension is updated.
+
+**Why not fake a signed-in session?** Google validates SID-family login cookies
+server-side. In our tests, a valid Google-issued `__Secure-3PSID` enabled larger
+batches; copying it replayed an existing session, not a new one. Pagination-token
+edits did not lift that limit, and no way to forge valid login cookies was found.
+The extension instead uses size-10 pagination and handles no login credentials.
 
 ---
 
@@ -49,8 +58,9 @@ reloads, no cookie is touched, and nothing is sent anywhere but to Google.
 - **It only runs on Google Maps pages.**
 - **Permissions:** `storage`, to remember your switches, plus host access to the 187 Google domains in the supported-domains list captured by this release. The build enumerates them because browser match patterns cannot wildcard TLDs; refreshing the list requires a new build and release.
   The extension reads and writes no cookie and needs no access to private windows.
-- **Nothing runs until you turn it on.** Each feature has its own switch in
-  the toolbar. Use one, two or all three.
+- **Feature changes are off by default.** Each has its own toolbar switch.
+  Payload inspection and Maps-script discovery can still run while switches
+  are off; disabled features do not unlock or hide content.
 
 ---
 
@@ -64,7 +74,7 @@ Install from the [Firefox add-on page](https://addons.mozilla.org/en-US/firefox/
 node tools/build.mjs
 ```
 
-That writes `dist/gm-native-maps-firefox-<version>.zip` and `dist/gm-native-maps-chromium-<version>.zip`. Node is the only requirement.
+That writes `dist/gm-native-maps-firefox-<version>.zip` and `dist/gm-native-maps-chromium-<version>.zip`. Requires Node and the `zip` command.
 
 ### Firefox
 

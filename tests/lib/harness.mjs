@@ -37,15 +37,12 @@ export function fakeBrowser({ features = { hours: false, photos: true }, pending
           return Object.fromEntries(wanted.filter((k) => k in store).map((k) => [k, structuredClone(store[k])]));
         },
         set: async (values) => { Object.assign(store, structuredClone(values)); did.push(`set ${Object.keys(values)}`); },
-        remove: async (key) => { delete store[key]; }
+        remove: async (keys) => { for (const key of typeof keys === 'string' ? [keys] : keys) delete store[key]; }
       },
       onChanged: on('storage-changed')
     },
     runtime: { onMessage: on('message'), onInstalled: on('installed'), onStartup: on('startup') },
-    tabs: {
-      sendMessage: async (id, m) => did.push(`message ${m.type}`),
-      onRemoved: on('tab-removed')
-    }
+    tabs: { onRemoved: on('tab-removed') }
   };
 
   return { browser, listeners, did, store, pendingNow: () => structuredClone(store.reloadPending) };
@@ -163,18 +160,16 @@ class FakeRequest {
 
 export function loadPage({
   url = 'https://www.google.com/maps/place/X/@48.86,2.35,15z',
-  localStorage = storage()
+  localStorage = storage(),
+  sessionStorage = storage()
 } = {}) {
-  const posted = [];
   const logs = [];
   const messageListeners = [];
   const scrollListeners = [];
-  const scripts = new Map();
 
   const win = {
     addEventListener: (type, fn) => { if (type === 'message') messageListeners.push(fn); },
     postMessage: (data) => {
-      posted.push(data);
       for (const fn of messageListeners) fn({ source: win, data });
     },
     location: { href: url, origin: 'https://www.google.com' },
@@ -189,14 +184,13 @@ export function loadPage({
       });
     },
     XMLHttpRequest: function () {},
-    sessionStorage: (() => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; })()
+    sessionStorage
   };
   win.nativeSends = [];
   win.XMLHttpRequest.prototype = { open() {}, send() { win.nativeSends.push(this); }, addEventListener() {} };
 
-  // gallery-ui.js and page-hook.js touch the document, so there has to be
-  // enough of one for them to start without throwing. None of these tests
-  // assert on the DOM; they assert on what is reported.
+  // Page scripts need enough DOM to start. Keep mutation observers and
+  // attribute/element stubs for the hours preload tests.
   const element = () => ({
     style: { setProperty() {}, removeProperty() {} },
     classList: { add() {}, remove() {}, contains: () => false },
@@ -207,10 +201,9 @@ export function loadPage({
     children: [], textContent: '', innerHTML: ''
   });
 
-  const links = [];
   const doc = {
     readyState: 'complete',
-    querySelectorAll: (sel) => (sel === 'link' ? links : sel.includes('script') ? [...scripts.values()] : []),
+    querySelectorAll: () => [],
     querySelector: () => null,
     createElement: element,
     images: [],
@@ -232,12 +225,9 @@ export function loadPage({
       observe() {}
       disconnect() {}
     },
-    requestAnimationFrame: (fn) => setTimeout(fn, 0),
     getComputedStyle: () => ({ getPropertyValue: () => '', display: 'block' }),
     sessionStorage: win.sessionStorage, localStorage, XMLHttpRequest: win.XMLHttpRequest, fetch: win.fetch,
-    Request: FakeRequest, Response: FakeResponse,
-    atob: (t) => Buffer.from(t, 'base64').toString('binary'),
-    btoa: (t) => Buffer.from(t, 'binary').toString('base64')
+    Request: FakeRequest, Response: FakeResponse
   };
   sandbox.globalThis = sandbox;
 
@@ -245,7 +235,7 @@ export function loadPage({
   new Function(...keys, PAGE_FILES().map(read).join('\n'))(...keys.map((k) => sandbox[k]));
 
   return {
-    win, doc, scripts, posted, logs, links,
+    win, logs,
     observers: () => sandbox.observers || [],
     api: () => win.GMGallery,
     switchOn: () => win.postMessage({
@@ -305,10 +295,6 @@ export function loadPage({
     },
     // The grid scrolled to its end (or not), as a scroll event on a pane.
     scrollEvent: (pane) => { for (const fn of scrollListeners) fn({ target: pane }); },
-    scroll: (atEnd = true) => {
-      const pane = { nodeType: 1, scrollHeight: 1000, clientHeight: 400, scrollTop: atEnd ? 600 : 0 };
-      for (const fn of scrollListeners) fn({ target: pane });
-    },
     // What the page read from the first gallery reply, and from the page after
     // it. Empty until a gallery has replied.
     outcomes: () => (win.__GM_GALLERY__?.seen
@@ -316,8 +302,7 @@ export function loadPage({
         asked: win.__GM_GALLERY__.asked }]
       : []),
     paged: () => (win.__GM_GALLERY__?.paged === null || win.__GM_GALLERY__?.paged === undefined
-      ? [] : [{ photos: win.__GM_GALLERY__.paged }]),
-    sent: (type) => posted.filter((m) => m?.type === type)
+      ? [] : [{ photos: win.__GM_GALLERY__.paged }])
   };
 }
 

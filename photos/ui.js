@@ -1,10 +1,7 @@
 (() => {
   'use strict';
 
-  // Two jobs on the page, both visual.
-  //
-  //   hide the sign-in prompts around the photo grid
-  //   show a short note when the page asks for one
+  // Hide sign-in prompts around the photo grid without changing its tiles.
   //
   // A block is hidden only when all of these hold:
   //   a real grid is on screen — five tiles or more, not the photo viewer's strip
@@ -14,66 +11,6 @@
   //   it is small — the place drawer also has buttons, and hiding that is worse
 
   const LOG = '[GM-GALLERY-UI]';
-
-  // --- a short note on the page ----------------------------------------------
-
-  const TOAST_MS = 7000;
-  let toastBox = null;
-
-  // One stack, bottom-left, reused for every note. Recreated if Maps has
-  // replaced the document underneath it.
-  function toastArea() {
-    if (toastBox?.isConnected) return toastBox;
-
-    toastBox = document.createElement('div');
-    toastBox.style.cssText = [
-      'position:fixed', 'left:16px', 'bottom:16px', 'z-index:2147483647',
-      'display:flex', 'flex-direction:column', 'gap:8px',
-      'max-width:360px', 'pointer-events:none',
-      'font:13px/1.45 Roboto, Arial, sans-serif'
-    ].join(';');
-
-    document.body.appendChild(toastBox);
-    return toastBox;
-  }
-
-  function toast(text) {
-    const area = toastArea();
-
-    const note = document.createElement('div');
-    note.textContent = text;
-    note.style.cssText = [
-      'background:rgba(32,33,36,0.96)', 'color:#fff',
-      'padding:10px 14px', 'border-radius:8px',
-      'box-shadow:0 2px 10px rgba(0,0,0,0.3)',
-      'opacity:0', 'transform:translateY(6px)',
-      'transition:opacity .18s ease, transform .18s ease'
-    ].join(';');
-
-    area.appendChild(note);
-    requestAnimationFrame(() => {
-      note.style.opacity = '1';
-      note.style.transform = 'translateY(0)';
-    });
-
-    while (area.children.length > 4) area.firstElementChild.remove();
-
-    setTimeout(() => {
-      note.style.opacity = '0';
-      note.style.transform = 'translateY(6px)';
-      setTimeout(() => note.remove(), 250);
-    }, TOAST_MS);
-  }
-
-  window.addEventListener('message', (event) => {
-    if (event.source !== window) return;
-    const data = event.data;
-    if (data?.source === 'gm-native-maps' && data.type === 'gm-toast' && data.text) {
-      try { toast(data.text); } catch (_) {}
-    }
-  }, false);
-
-  window.GMGalleryToast = toast;
 
   // --- finding the photo grid ------------------------------------------------
 
@@ -121,7 +58,9 @@
     return { container, tiles: nodes };
   }
 
+  const hidden = new Map();
   const hide = (node, why) => {
+    hidden.set(node, { value: node.style.getPropertyValue('display'), priority: node.style.getPropertyPriority('display') });
     node.setAttribute(HIDDEN, why);
     node.style.setProperty('display', 'none', 'important');
   };
@@ -158,6 +97,8 @@
   // also what the single-photo viewer's thumbnail strip looks like, and
   // hiding that strip's neighbours takes the place drawer with it.
   function tidy() {
+    if (!running) return;
+    for (const node of hidden.keys()) if (!node.isConnected) hidden.delete(node);
     const grid = findGrid();
     if (!grid || grid.tiles.length < 5) return;
     if (window.__GM_GALLERY__?.viewerOnly) return;
@@ -175,27 +116,31 @@
     if (pending) return;
     pending = setTimeout(() => {
       pending = 0;
-      try { tidy(); } catch (error) { console.warn(LOG, 'tidy failed', error); }
+      try { tidy(); } catch (error) { console.warn(LOG, `prompt cleanup failed: ${error?.message || String(error)}`); }
     }, 200);
   };
 
   // Starts once the feature is on. The observer is what catches a prompt
   // that appears long after the gallery reply.
+  let observer = null;
   function start() {
-    window.addEventListener('GM_GALLERY_READY', schedule);
-    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true });
+    if (!running || observer) return;
+    observer = new MutationObserver(schedule);
+    observer.observe(document.body, { childList: true, subtree: true });
     schedule();
   }
 
   // Puts back everything this file hid. Returns how many blocks that was.
   window.GMGalleryUI = {
     unhide() {
-      const nodes = [...document.querySelectorAll(`[${HIDDEN}]`)];
-      for (const node of nodes) {
-        node.style.removeProperty('display');
+      const count = hidden.size;
+      for (const [node, display] of hidden) {
+        if (display.value) node.style.setProperty('display', display.value, display.priority);
+        else node.style.removeProperty('display');
         node.removeAttribute(HIDDEN);
       }
-      return nodes.length;
+      hidden.clear();
+      return count;
     }
   };
 
@@ -206,9 +151,18 @@
 
     const data = event.data;
     if (!data || data.source !== 'gm-native-maps' || data.type !== 'gm-settings') return;
-    if (!data.features?.photos || running) return;
+    const enabled = !!data.features?.photos;
+    if (enabled === running) return;
+    running = enabled;
+    if (!running) {
+      observer?.disconnect();
+      observer = null;
+      clearTimeout(pending);
+      pending = 0;
+      window.GMGalleryUI.unhide();
+      return;
+    }
 
-    running = true;
     if (document.body) start();
     else document.addEventListener('DOMContentLoaded', start, { once: true });
   });
