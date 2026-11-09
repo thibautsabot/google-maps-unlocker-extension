@@ -52,6 +52,40 @@ const photoView = 'https://www.google.com/maps/@48.86,2.35,3a,75y,90t/data=!3m7'
     !world.did.length);
 }
 
+// --- a swap is not judged on the place card's preview --------------------------
+// The preview is two photos of two on a capped session too. A swap that saw
+// only that must wait for the gallery, however long that takes, and be judged
+// by it. It was once called lifted on the preview and the capped session kept.
+{
+  const preview = { type: 'gm-roll-outcome', firstPage: 2, serverTotal: 2, preview: true };
+  const world = fakeBrowser({ privateSession: () => [cookie('NID', 'fresh', { storeId: '1' })] });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send(capped);
+  await send({ type: 'gm-hello', url: place });
+  await send(preview);
+  await wait(1800);
+  t.check('preview: the swap is not called lifted on it', !world.did.some((d) => d.includes('verdict: lifted')));
+  t.check('preview: and nothing is rolled for it', world.did.filter((d) => d.startsWith('private window')).length === 1);
+
+  await send(capped);
+  t.check('preview: the gallery that follows judges the swap, which is still capped',
+    world.did.some((d) => d.includes('verdict: still capped')));
+}
+{
+  const preview = { type: 'gm-roll-outcome', firstPage: 2, serverTotal: 2, preview: true };
+  const world = fakeBrowser({ privateSession: () => [cookie('NID', 'fresh', { storeId: '1' })] });
+  const send = loadBackground(world);
+
+  await send({ type: 'gm-hello', url: place });
+  await send(capped);
+  await send({ type: 'gm-hello', url: place });
+  await send(preview);
+  await send({ type: 'gm-roll-outcome', firstPage: 20, serverTotal: 112, asked: 20 });
+  t.check('preview: a gallery that is whole lifts the swap', world.did.some((d) => d.includes('verdict: lifted')));
+}
+
 // --- the ordinary capped page -----------------------------------------------
 {
   const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });

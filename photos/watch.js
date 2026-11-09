@@ -142,9 +142,8 @@
   // --- the first gallery reply, then any page after it -----------------------
 
   let reportedFirst = false;
-  // A complete-looking list waiting to see whether a bigger reply follows it.
-  let heldComplete = null;
-  const COMPLETE_WAIT_MS = 2500;
+  // The place card's preview has been reported, so it is reported once.
+  let previewTold = false;
   let reportingFilled = false;
   let viewerLogged = false;
   let reportedFollowUp = false;
@@ -218,25 +217,22 @@
       if (!found) return false;
 
       // A list that is complete as it stands (no more photos than it holds)
-      // may be the small preview Maps asks for before the gallery, not the
-      // gallery itself. Taken as the first reply it hid the real one, which
-      // then counted as a second page, so a capped session was never seen and
-      // the preview made a swap look lifted. It is held back for a moment:
-      // a larger reply arriving meanwhile is the gallery, and a place that
-      // really has this few photos is reported once nothing bigger came.
-      const complete = typeof found.total === 'number' && found.total <= found.size;
-      if (complete) {
-        if (!heldComplete) {
-          heldComplete = setTimeout(() => {
-            heldComplete = null;
-            if (!reportedFirst) acceptFirst(rpc, payload, found, requestBody);
-          }, COMPLETE_WAIT_MS);
+      // is the small preview Maps asks for to draw the place card, not the
+      // gallery. It says nothing about the cap: a capped session gets the same
+      // two photos. Taken as the first reply it hid the real one, which then
+      // counted as a second page, and a swap was judged lifted on the preview
+      // alone. So it is not the first reply. The background is told once, so
+      // it stops waiting on a reply that will not settle anything, and the
+      // real gallery reply is judged when it comes.
+      if (typeof found.total === 'number' && found.total <= found.size) {
+        if (!previewTold) {
+          previewTold = true;
+          note(`a preview of ${found.size} photos arrived; the gallery itself is judged when it is opened`);
+          tell({ type: 'gm-roll-outcome', firstPage: found.size, serverTotal: found.total, preview: true });
         }
         return true;
       }
 
-      clearTimeout(heldComplete);
-      heldComplete = null;
       acceptFirst(rpc, payload, found, requestBody);
       return true;
     });

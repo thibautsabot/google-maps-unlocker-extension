@@ -56,6 +56,19 @@ async function onOutcome(msg, tabId) {
 
   stopWaitingForPage(tabId);
 
+  // The place card's preview: two photos of two whatever the session. It
+  // cannot show a cap, so it settles nothing. A swap waiting on it is left
+  // unjudged rather than called lifted, and the gallery reply judges what
+  // comes next.
+  if (msg.preview) {
+    await say(tabId, `only the place card's preview replied (${firstPage} of ${serverTotal}),`
+      + ' so the session is judged when the gallery is opened');
+    // Waits for the gallery to be opened. The swap stays pending, so that
+    // reply decides it; only the silence clock, which would call it lifted, goes.
+    if (pending.has(tabId)) clearDecision(tabId);
+    return;
+  }
+
   // The page lengthened a capped list itself, so the list looks whole while
   // the session behind it is not. It says nothing about the cap being lifted,
   // so the memory of what was tried stays. After a swap this is that swap
