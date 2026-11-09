@@ -16,6 +16,7 @@
   let reviewsOn = false;
   let notice = '';
   let seeMore = '';
+  let countedLabels = [];
   let reviewsTab = '';
   let checkFound = '';
   let detectorFound = '';
@@ -132,6 +133,23 @@
 
   // text + nbsp + "(" then a count, as a concatenation or a template.
   const SEE_MORE = /"((?:\\.|[^"\\])*)\\u00a0\("\+|`((?:\\.|[^`\\$])*)\\u00a0\(\$\{|`((?:\\.|[^`\\$])*)\u00a0\(\$\{/;
+
+  // Builds that write a plain space before the count (English) are missed by
+  // SEE_MORE. Any `label (${count})` template is a candidate here, and it is
+  // only ever used to stop the sign-in prompt on the Reviews tab.
+  const COUNTED = /`((?:\\.|[^`\\$])*?)(?:\\u00a0|[\u00a0 ])\(\$\{/g;
+
+  function countedIn(source) {
+    const found = new Set();
+    COUNTED.lastIndex = 0;
+    let match;
+    while ((match = COUNTED.exec(source))) {
+      const text = match[1].trim();
+      if (text.length < 4 || text.length > 60 || text.includes('${')) continue;
+      found.add(text);
+    }
+    return [...found];
+  }
 
   function checkName(source) {
     const names = new Map();
@@ -285,6 +303,7 @@
       const text = label[1] ?? label[2] ?? label[3];
       try { seeMore = JSON.parse('"' + text.replace(/\\`/g, '`').replace(/"/g, '\\"') + '"'); } catch (_) {}
     }
+    countedLabels = countedIn(source);
     wrapSoon(name);
 
     const actions = listActions(source, name) || inlineGate(source)?.actions;
@@ -293,7 +312,7 @@
       if (tab) reviewsTab = tab;
     }
 
-    if (reviewsOn) hideNotice();
+    if (reviewsOn) { hideNotice(); hideMoreButton(); }
   }
 
   // Whether a node paints a photo anywhere inside it, by background image
@@ -344,10 +363,38 @@
     best.style.setProperty('display', 'none', 'important');
   }
 
+  // Signed in, the Reviews tab has no see-more button: the list just scrolls.
+  // Signed out the server sends five reviews and stops, so the button could
+  // only lead to the sign-in dialog. It is hidden there, and shown again on
+  // the overview, where the click still opens the list.
+  const BUTTON_MARK = 'data-gm-reviews-more';
+
+  function hideMoreButton() {
+    if (!reviewsOn || !document.body) return;
+    const names = (seeMore ? [seeMore, ...countedLabels] : countedLabels).map(norm);
+    const onTab = reviewsTabSelected();
+
+    for (const node of document.querySelectorAll(`[${BUTTON_MARK}]`)) {
+      if (onTab) continue;
+      node.style.removeProperty('display');
+      node.removeAttribute(BUTTON_MARK);
+    }
+    if (!onTab || !names.length) return;
+
+    for (const button of document.querySelectorAll('button, [role="button"]')) {
+      if (button.getAttribute(BUTTON_MARK)) continue;
+      const label = norm(button.getAttribute('aria-label') || button.textContent);
+      if (!names.some((text) => label.startsWith(text))) continue;
+      button.setAttribute(BUTTON_MARK, '1');
+      button.style.setProperty('display', 'none', 'important');
+    }
+  }
+
   function showNotice() {
-    for (const node of document.querySelectorAll(`[${MARK}]`)) {
+    for (const node of document.querySelectorAll(`[${MARK}], [${BUTTON_MARK}]`)) {
       node.style.removeProperty('display');
       node.removeAttribute(MARK);
+      node.removeAttribute(BUTTON_MARK);
     }
   }
 
@@ -387,7 +434,7 @@
       if (pending) return;
       pending = setTimeout(() => {
         pending = 0;
-        try { hideNotice(); } catch (error) { console.warn(LOG, `notice failed reason=${error?.message || String(error)}`); }
+        try { hideNotice(); hideMoreButton(); } catch (error) { console.warn(LOG, `notice failed reason=${error?.message || String(error)}`); }
       }, 200);
     };
 
@@ -413,15 +460,17 @@
     // is stopped. Only the sign-in prompt is removed; the reviews Google
     // does not send are not there to show.
     document.addEventListener('click', (event) => {
-      if (!reviewsOn || !seeMore || !event.target?.closest) return;
+      if (!reviewsOn || !(seeMore || countedLabels.length) || !event.target?.closest) return;
 
       const button = event.target.closest('button, [role="button"]');
       if (!button) return;
 
       const label = norm(button.getAttribute('aria-label') || button.textContent);
-      if (!label.startsWith(norm(seeMore))) return;
+      const onTab = reviewsTabSelected();
+      const names = seeMore ? [seeMore, ...countedLabels] : countedLabels;
+      if (!names.some((text) => label.startsWith(norm(text)))) return;
 
-      if (reviewsTabSelected()) {
+      if (onTab) {
         event.preventDefault();
         event.stopImmediatePropagation();
         return;
@@ -440,7 +489,7 @@
   window.__GM_REVIEWS__ = {
     // What discovery found in the Maps script. Read by the tests, and handy
     // in the console when a Maps update leaves a feature doing nothing.
-    learned: () => ({ check: checkFound, detector: detectorFound, notice, seeMore, reviewsTab })
+    learned: () => ({ check: checkFound, detector: detectorFound, notice, seeMore, reviewsTab, countedLabels })
   };
 
   window.addEventListener('message', (event) => {
@@ -454,7 +503,7 @@
     reviewsOn = enabled;
     if (reviewsOn && checkFound && discoveryStatus !== 'ok') wrapSoon(checkFound);
     reportDiscovery();
-    if (reviewsOn) hideNotice();
+    if (reviewsOn) { hideNotice(); hideMoreButton(); }
     else showNotice();
   });
 })();
