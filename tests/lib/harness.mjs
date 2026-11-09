@@ -235,7 +235,9 @@ export function loadPage({
     requestAnimationFrame: (fn) => setTimeout(fn, 0),
     getComputedStyle: () => ({ getPropertyValue: () => '', display: 'block' }),
     sessionStorage: win.sessionStorage, localStorage, XMLHttpRequest: win.XMLHttpRequest, fetch: win.fetch,
-    Request: FakeRequest, Response: FakeResponse
+    Request: FakeRequest, Response: FakeResponse,
+    atob: (t) => Buffer.from(t, 'base64').toString('binary'),
+    btoa: (t) => Buffer.from(t, 'binary').toString('base64')
   };
   sandbox.globalThis = sandbox;
 

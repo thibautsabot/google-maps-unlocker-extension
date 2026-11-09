@@ -703,6 +703,43 @@ const photosIn = async (response) => {
   t.check('follow-up: the last page is left as it is', (await sizeOf(last)).size === 8 && page.win.fetchCalls.length === 1);
 }
 
+// --- GMGallery.tokens() compares continuation tokens without showing them --------
+{
+  // Tokens are protobuf-like blobs, mostly zero bytes. These differ at known places.
+  const make = (changes) => {
+    const bytes = new Uint8Array(120);
+    bytes.set([0x12, 0xf8, 0x03, 0x29, 0x84, 0x22, 0xe3], 0);
+    bytes.fill(0, 7);
+    for (const [at, value] of Object.entries(changes)) bytes[at] = value;
+    return Buffer.from(bytes).toString('base64').replace(/\+/g, '-').replace(/\//g, '_');
+  };
+  const reply = (token) => frame('hspqX', Object.assign(JSON.parse(JSON.stringify(REPLY_CAPPED)), { 5: token }));
+
+  const page = loadPage();
+  page.switchOn();
+  t.check('tokens: nothing seen is said plainly', String(page.api().tokens()).includes('0 token seen'));
+
+  await page.replyByRequest(reply(make({ 40: 1, 41: 9 })), askingFor(20));
+  await page.replyByRequest(reply(make({ 40: 2, 41: 9 })), askingFor(20));
+  await page.replyByRequest(reply(make({ 40: 3, 41: 9 })), askingFor(20));
+
+  const out = page.api().tokens();
+  t.check('tokens: three pages of one load are three samples', out.tokens === 3 && out.loads === 1);
+  t.check('tokens: only the position that moves is reported between pages',
+    out.betweenPages.length === 2 && out.betweenPages.every((d) => d.changed === 1 && d.positions[0][0] === 40));
+  t.check('tokens: with the bytes found there', out.betweenPages[0].positions[0][1] === '01'
+    && out.betweenPages[0].positions[0][2] === '02');
+  t.check('tokens: no token is handed back',
+    !JSON.stringify(out).match(/[A-Za-z0-9_-]{60,}/));
+
+  // A repeated token is not a new sample.
+  await page.replyByRequest(reply(make({ 40: 3, 41: 9 })), askingFor(20));
+  t.check('tokens: the same token twice is one sample', page.api().tokens().tokens === 3);
+
+  t.check('tokens: forgetting starts over',
+    (page.api().forgetTokens(), String(page.api().tokens()).includes('0 token seen')));
+}
+
 // --- a jump of the scroll position is recorded in the trace ----------------------
 {
   const page = loadPage();

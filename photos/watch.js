@@ -290,9 +290,66 @@
     typeof body === 'string' && String(url).includes('batchexecute');
 
   function readReply(batch, text, requestBody, url = null) {
+    if (batch) sampleTokens(text);
     if (batch) record(text, requestBody, url);
     if (batch) onFirstGallery(text, requestBody);
     else onPlacePayload(text);
+  }
+
+  // --- token samples, for working out what a continuation token is made of -----
+  //
+  // Each token a gallery reply hands out is kept as bytes, in this tab's
+  // session storage so that loads can be compared. GMGallery.tokens() reports
+  // which byte positions differ between them. The tokens themselves are never
+  // printed, only positions, and the bytes at positions that differ.
+  const SAMPLES_KEY = 'gmnx.tokenSamples';
+  const MAX_SAMPLES = 24;
+  const loadId = Math.random().toString(36).slice(2, 8);
+
+  const fromB64 = (text) => {
+    try {
+      const raw = atob(String(text).replace(/-/g, '+').replace(/_/g, '/'));
+      return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+    } catch (_) { return null; }
+  };
+  const toB64 = (bytes) => btoa(String.fromCharCode(...bytes));
+
+  const readSamples = () => {
+    try { return JSON.parse(sessionStorage.getItem(SAMPLES_KEY) || '[]') || []; } catch (_) { return []; }
+  };
+
+  function sampleTokens(text) {
+    const found = [];
+    eachGalleryCall(text, (rpc, payload) => {
+      if (single(payload) || !describe(payload)) return false;
+      const token = tokenOf(rpc, payload)?.value;
+      const bytes = typeof token === 'string' ? fromB64(token) : null;
+      if (bytes) found.push(bytes);
+      return true;
+    });
+    if (!found.length) return;
+
+    const samples = readSamples();
+    const known = new Set(samples.map((x) => x.b));
+    for (const bytes of found) {
+      const b = toB64(bytes);
+      if (known.has(b)) continue;
+      samples.push({ load: loadId, b });
+    }
+    try { sessionStorage.setItem(SAMPLES_KEY, JSON.stringify(samples.slice(-MAX_SAMPLES))); } catch (_) {}
+  }
+
+  // Positions where two byte strings differ, with the bytes found there.
+  function byteDiff(a, b) {
+    const changed = [];
+    const length = Math.max(a.length, b.length);
+    for (let i = 0; i < length; i++) {
+      if (a[i] !== b[i]) {
+        changed.push([i, a[i] === undefined ? '--' : a[i].toString(16).padStart(2, '0'),
+          b[i] === undefined ? '--' : b[i].toString(16).padStart(2, '0')]);
+      }
+    }
+    return { lengths: [a.length, b.length], changed: changed.length, positions: changed.slice(0, 60) };
   }
 
   // What each gallery exchange looked like, for working out why a session is
@@ -663,6 +720,41 @@
     // The shape of each gallery request and reply seen on this page, with no
     // photo URLs in it. For reading what a session was actually given.
     capture: () => JSON.parse(JSON.stringify(recorded)),
+
+    // What differs between the continuation tokens this tab has been handed:
+    // consecutive pages of one load, and the same page across loads. Reports
+    // lengths and byte positions with the bytes found there, never a token.
+    // Open the gallery, scroll a few pages, reload and do it again.
+    tokens: () => {
+      const samples = readSamples().map((x) => ({ load: x.load, bytes: Uint8Array.from(atob(x.b), (c) => c.charCodeAt(0)) }));
+      if (samples.length < 2) return `${samples.length} token seen: open the gallery and scroll, then ask again`;
+
+      const nonZero = (bytes) => [...bytes].filter(Boolean).length;
+      const out = {
+        tokens: samples.length,
+        loads: [...new Set(samples.map((x) => x.load))].length,
+        sizes: samples.map((x) => `${x.bytes.length}b/${nonZero(x.bytes)} set`),
+        betweenPages: [],
+        acrossLoads: []
+      };
+
+      for (let i = 1; i < samples.length; i++) {
+        const entry = { from: i, to: i + 1, ...byteDiff(samples[i - 1].bytes, samples[i].bytes) };
+        if (samples[i - 1].load === samples[i].load) out.betweenPages.push(entry);
+      }
+
+      const firsts = new Map();
+      for (const [i, x] of samples.entries()) if (!firsts.has(x.load)) firsts.set(x.load, i);
+      const starts = [...firsts.values()];
+      for (let k = 1; k < starts.length; k++) {
+        out.acrossLoads.push({ comparing: `first token of load ${k} and load ${k + 1}`,
+          ...byteDiff(samples[starts[k - 1]].bytes, samples[starts[k]].bytes) });
+      }
+      return JSON.parse(JSON.stringify(out));
+    },
+
+    // Forgets the token samples, for starting a clean comparison.
+    forgetTokens: () => { try { sessionStorage.removeItem(SAMPLES_KEY); } catch (_) {} return 'cleared'; },
 
     // What happened since the page began: errors, rejections, clicks and
     // batchexecute calls, each with a time in milliseconds. Messages are cut
