@@ -794,6 +794,31 @@ const photosIn = async (response) => {
   t.check('restore: a fall with no growth is left alone', el3.scrollTop === 58);
 }
 
+// --- the small preview before the gallery is not the gallery --------------------
+// Maps asks for a few photos for the place card first: two of two. Taken as
+// the first reply, it hid the real gallery, which then counted as a second
+// page, so a capped session was never seen.
+{
+  const page = loadPage();
+  page.switchOn();
+  await page.replyByRequest(galleryReply(2, 2, null, 0), askingFor(4));
+  await page.replyByRequest(galleryReply(10, 112, 'T1', 0), askingFor(20));
+  await wait(50);
+  const outcomes = page.sent('gm-roll-outcome');
+  t.check('preview: the gallery after it is the first reply reported', outcomes.length === 1 && outcomes[0].firstPage === 10);
+  t.check('preview: with its total and what it asked for', outcomes[0]?.serverTotal === 112 && outcomes[0]?.asked === 20);
+  t.check('preview: and it is not called a second page', page.sent('gm-gallery-paged').length === 0);
+}
+{
+  // A place that really has two photos is reported once nothing bigger came.
+  const page = loadPage();
+  page.switchOn();
+  await page.replyByRequest(galleryReply(2, 2, null, 0), askingFor(4));
+  await wait(2700);
+  const outcomes = page.sent('gm-roll-outcome');
+  t.check('preview: a place with two photos is still reported', outcomes.length === 1 && outcomes[0].firstPage === 2);
+}
+
 // --- the outcome says when the list was lengthened here --------------------------
 {
   const page = loadPage();

@@ -142,6 +142,9 @@
   // --- the first gallery reply, then any page after it -----------------------
 
   let reportedFirst = false;
+  // A complete-looking list waiting to see whether a bigger reply follows it.
+  let heldComplete = null;
+  const COMPLETE_WAIT_MS = 2500;
   let reportingFilled = false;
   let viewerLogged = false;
   let reportedFollowUp = false;
@@ -214,30 +217,55 @@
       const found = describe(payload);
       if (!found) return false;
 
-      // Only this call's arguments are the page size. A batch holds other
-      // calls, and the same slot in one of those is a different field.
-      const asked = requestBody
-        ? askedFor(requestBody, { rpc, served: found.size, layoutFor })
-        : null;
+      // A list that is complete as it stands (no more photos than it holds)
+      // may be the small preview Maps asks for before the gallery, not the
+      // gallery itself. Taken as the first reply it hid the real one, which
+      // then counted as a second page, so a capped session was never seen and
+      // the preview made a swap look lifted. It is held back for a moment:
+      // a larger reply arriving meanwhile is the gallery, and a place that
+      // really has this few photos is reported once nothing bigger came.
+      const complete = typeof found.total === 'number' && found.total <= found.size;
+      if (complete) {
+        if (!heldComplete) {
+          heldComplete = setTimeout(() => {
+            heldComplete = null;
+            if (!reportedFirst) acceptFirst(rpc, payload, found, requestBody);
+          }, COMPLETE_WAIT_MS);
+        }
+        return true;
+      }
 
-      firstExchange = { args: argsOf(requestBody, rpc), reply: payload, served: found.size };
-      state.rpc = rpc;
-      state.firstPage = found.size;
-      state.serverTotal = found.total;
-      state.asked = asked;
-      state.seen++;
-      state.viewerOnly = false;
-      rememberGalleryUrl();
-
-      reportedFirst = true;
-      note(`this session was served ${found.size} photos`
-        + (found.total ? ` of ${found.total}` : '')
-        + (asked ? `, having asked for ${asked}` : ', and what it asked for is unknown'));
-
-      tell({ type: 'gm-roll-outcome', firstPage: found.size, serverTotal: found.total, asked,
-        filled: reportingFilled });
+      clearTimeout(heldComplete);
+      heldComplete = null;
+      acceptFirst(rpc, payload, found, requestBody);
       return true;
     });
+  }
+
+  // The first gallery reply of this load, reported once.
+  function acceptFirst(rpc, payload, found, requestBody) {
+    // Only this call's arguments are the page size. A batch holds other
+    // calls, and the same slot in one of those is a different field.
+    const asked = requestBody
+      ? askedFor(requestBody, { rpc, served: found.size, layoutFor })
+      : null;
+
+    firstExchange = { args: argsOf(requestBody, rpc), reply: payload, served: found.size };
+    state.rpc = rpc;
+    state.firstPage = found.size;
+    state.serverTotal = found.total;
+    state.asked = asked;
+    state.seen++;
+    state.viewerOnly = false;
+    rememberGalleryUrl();
+
+    reportedFirst = true;
+    note(`this session was served ${found.size} photos`
+      + (found.total ? ` of ${found.total}` : '')
+      + (asked ? `, having asked for ${asked}` : ', and what it asked for is unknown'));
+
+    tell({ type: 'gm-roll-outcome', firstPage: found.size, serverTotal: found.total, asked,
+      filled: reportingFilled });
   }
 
   // --- photos the page already has, before any gallery request ---------------
