@@ -7,7 +7,7 @@ const FEATURES = [
   {
     id: 'reviews',
     label: 'Review search and filters',
-    note: 'Opens the review list, sort, and search without the sign-in prompt.'
+    note: 'Opens the review list, sort, and search without the sign-in prompt, and loads more reviews as you scroll.'
   },
   {
     id: 'photos',

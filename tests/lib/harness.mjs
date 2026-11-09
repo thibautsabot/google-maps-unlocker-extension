@@ -178,7 +178,10 @@ export function loadPage({
       if (input instanceof FakeRequest) input.bodyUsed = true;
       (win.fetchCalls ||= []).push({ url: typeof input === 'string' ? input : input?.url, init });
       // A queue of replies, one per call, for a test that walks several pages.
-      const text = win.fetchReplies?.length ? win.fetchReplies.shift() : (win.fetchReplyText ?? '');
+      // A test can answer by what was asked instead of by order.
+      const answered = win.fetchAnswer && init ? win.fetchAnswer(init) : undefined;
+      const text = answered !== undefined ? answered
+        : win.fetchReplies?.length ? win.fetchReplies.shift() : (win.fetchReplyText ?? '');
       return new FakeResponse(text, {
         status: 200, url: typeof input === 'string' ? input : input?.url, type: 'basic', redirected: false
       });

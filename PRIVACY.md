@@ -20,11 +20,16 @@ The extension reads and writes no cookie.
   replays its request in batches of 10, follows Google's continuation tokens,
   and gives Maps the merged list. These are ordinary Maps requests to Google. No
   cookie is read, written or saved, and the extension has no cookie permission.
+- **Reviews.** When Google sends five reviews and no way to continue, the
+  extension asks Google's review call for the following rows (a row offset),
+  and, when a rating sort runs out, for Google's own topic chips and for words
+  taken from the reviews already on screen. These are ordinary Maps requests
+  to Google, with the same sort you chose. No cookie is read, written or saved.
 
 ## What leaves your device
 
 The extension makes requests only to Google: photo-page replays, opening-hours
-retries, and fetches of matching Maps JavaScript bundles for script discovery.
+retries, review-list pages, and fetches of matching Maps JavaScript bundles for script discovery.
 Discovery may fetch multiple bundles and can run while feature switches are off.
 It contacts no other server, and does not send user data to the extension
 developer or any third party.

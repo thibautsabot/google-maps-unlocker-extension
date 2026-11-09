@@ -21,8 +21,17 @@ hours with the page. When that happens the extension asks for the place again
 and hands Maps the full reply, so nothing reloads and no cookie is touched.
 
 ### Review search and filters
-Search and sort reviews, and open the review list without the sign-in prompt.
-Reviews Google does not send cannot be recovered by removing the prompt.
+Search and sort reviews, and open the review list without the sign-in prompt. The *More reviews* button on the Reviews tab is hidden: the list loads as you scroll, like a signed-in session.
+Signed out, Google sends five reviews and no way to continue. The extension gets as close to a signed-in list as the server allows, in this order:
+
+1. **The list itself.** The review call accepts a row offset, so the following rows are asked for as you scroll, in the sort, search or topic you picked. Default and newest reach the whole list.
+2. **A bigger page.** How deep *highest* and *lowest* go grows with the page size, and the server refuses more than 20, so 20 is asked for.
+3. **Google's topic chips**, the words under the Sort button ("macarons", "chocolates"). Only when highest or lowest has run out, each chip is asked for under the same sort, which reaches reviews past where that sort stops.
+4. **Words from the reviews on screen**, searched under the same sort, for whatever the chips did not reach.
+
+A step only starts when the one before has nothing left, and a review is never shown twice. No cookie is read and nothing is signed in.
+
+**What to expect.** On a test place with 949 reviews, the default list reached all 949, in the same order a signed-in session shows. *Highest* and *lowest* reach part of the list (324 of 949 with chips and words), in order for the first 163. Loading everything takes many requests, three at a time per scroll. Topic chips appear on only some place replies, so a place without them goes from the rows straight to words.
 
 ### Full photos
 Without signing in, Google gives the first page of a gallery 10 photos and

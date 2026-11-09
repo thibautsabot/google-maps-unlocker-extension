@@ -13,7 +13,7 @@ and bundle discovery can still run.
 | Switch | What it does |
 |---|---|
 | Full opening hours | Expands the collapsed weekly hours on click, and asks Google for the place again when its first reply carries only today |
-| Review search and filters | Lets the review search, sort and more-reviews controls work without the sign-in prompt |
+| Review search and filters | Lets the review search and sort work without the sign-in prompt, hides the more-reviews button on the Reviews tab, and loads more reviews as you scroll by asking Google's review call for the next rows |
 | Full photos | Asks Google for the gallery pages after the first, using the token Google already sent, and gives Maps the longer list |
 
 ## No cookies, no private windows
@@ -60,8 +60,12 @@ is declared as `none`.
 3. Turn on "Full opening hours" and reload the Maps tab when offered. Click the
    hours: the whole week opens. If the first place reply has only today, the
    extension asks for the place again; console lines use `[GM-HOURS]`.
-4. Turn on "Review search and filters". Open the Reviews tab: search, sort and
-   the more-reviews button work with no sign-in prompt.
+4. Turn on "Review search and filters". Open the Reviews tab: search and sort
+   work with no sign-in prompt, and scrolling to the end of the list loads more
+   reviews. These come from extra requests to the same Google review call:
+   first the next rows of the same list (a row offset), then, only when a
+   rating sort runs out, Google's topic chips and words from the reviews on
+   screen, all under the sort you chose. No cookie is read and no sign-in is faked.
 5. Turn on "Full photos". Open a place with many photos and its gallery: the
    capped server replies are replaced by merged batches, normally 20 photos
    initially, and scrolling keeps loading more. Console lines use

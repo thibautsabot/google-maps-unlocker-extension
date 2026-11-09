@@ -13,7 +13,7 @@ Paste `store/REVIEWER-NOTES.md` into each store's reviewer-notes field.
 ## Before any store
 
 - [ ] Put this line in every store description: `Google Maps is a trademark of Google LLC. Use of this trademark is subject to Google Permissions. This extension is not affiliated with or endorsed by Google.` Chrome's branding rules require the attribution when the name mentions Google Maps. The README includes the same attribution.
-- [ ] Read `PRIVACY.md` and `store/REVIEWER-NOTES.md` against current store forms. No feature touches cookies. The photo and opening-hours features make normal requests to Google.
+- [ ] Read `PRIVACY.md` and `store/REVIEWER-NOTES.md` against current store forms. No feature touches cookies. The photo, review and opening-hours features make normal requests to Google.
 
 - [x] Use provided logo at `icons/icon-128.png`, with generated 16, 32 and 48 px toolbar variants.
 - [ ] Take 1-5 screenshots at 1280x800: opening hours open, review search working, the toolbar panel. Capture actual browser UI; no mockups.

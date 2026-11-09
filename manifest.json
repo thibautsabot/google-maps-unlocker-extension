@@ -419,7 +419,8 @@
         "photos/ui.js",
         "hours/reply.js",
         "hours/hours.js",
-        "reviews/ungate.js"
+        "reviews/ungate.js",
+        "reviews/more.js"
       ],
       "run_at": "document_start",
       "world": "MAIN"
