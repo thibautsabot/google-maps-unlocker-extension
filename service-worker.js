@@ -7,8 +7,5 @@ importScripts(
   'common/registry.js',
   'common/log.js',
   'common/reload.js',
-  'photos/cookies.js',
-  'photos/verdict.js',
-  'photos/roll.js',
   'common/dispatch.js'
 );

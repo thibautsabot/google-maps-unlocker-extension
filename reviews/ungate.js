@@ -368,7 +368,8 @@
     // On the reviews tab the list is already open, and the button stands for
     // the reviews the server refused to page. Opening the list again does
     // nothing, and the sign-in dialog would only get in the way, so the click
-    // is stopped. Getting those reviews is the session swap's job.
+    // is stopped. Only the sign-in prompt is removed; the reviews Google
+    // does not send are not there to show.
     document.addEventListener('click', (event) => {
       if (!reviewsOn || !seeMore || !event.target?.closest) return;
 
@@ -413,37 +414,6 @@
     clear: () => chartShown() && !seeMoreShown() && !document.querySelector(`[${MARK}]`)
   };
 
-  const tell = (message) => {
-    try { window.postMessage({ source: 'gm-native-maps', ...message }, location.origin); } catch (_) {}
-  };
-
-  // Reported at most once each per load, and a limited report can follow a
-  // clear one. A clear needs two looks in a row, so a page still drawing
-  // its chart before its button is not read as clear.
-  let sent = '';
-  let clearLooks = 0;
-  let photosOn = false;
-
-  function reportState() {
-    if (!photosOn || !seeMore || sent === 'limited') return;
-
-    if (window.__GM_REVIEWS__.limited()) {
-      sent = 'limited';
-      console.debug(LOG, 'this session is limited');
-      tell({ type: 'gm-reviews-state', limited: true, url: location.href });
-      return;
-    }
-
-    clearLooks = window.__GM_REVIEWS__.clear() ? clearLooks + 1 : 0;
-    if (clearLooks >= 2 && !sent) {
-      sent = 'clear';
-      console.debug(LOG, 'this session shows the whole review section');
-      tell({ type: 'gm-reviews-state', limited: false, url: location.href });
-    }
-  }
-
-  setInterval(reportState, 1000);
-
   window.addEventListener('message', (event) => {
     if (event.source !== window) return;
 
@@ -451,7 +421,6 @@
     if (!data || data.source !== 'gm-native-maps' || data.type !== 'gm-settings') return;
 
     reviewsOn = !!data.features?.reviews;
-    photosOn = !!data.features?.photos;
     if (reviewsOn) hideNotice();
     else showNotice();
   });

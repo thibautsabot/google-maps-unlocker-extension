@@ -24,7 +24,6 @@
     }
   },
   "permissions": [
-    "cookies",
     "storage"
   ],
   "host_permissions": [
@@ -222,9 +221,6 @@
       "common/registry.js",
       "common/log.js",
       "common/reload.js",
-      "photos/cookies.js",
-      "photos/verdict.js",
-      "photos/roll.js",
       "common/dispatch.js"
     ],
     "service_worker": "service-worker.js"
@@ -629,11 +625,6 @@
       "run_at": "document_start"
     }
   ],
-  "incognito": "spanning",
-  "options_ui": {
-    "page": "options/options.html",
-    "open_in_tab": false
-  },
   "icons": {
     "16": "icons/icon-16.png",
     "32": "icons/icon-32.png",

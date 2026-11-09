@@ -1,13 +1,10 @@
 # Privacy policy: GM Native Maps
 
-Last updated: 7 October 2026
+Last updated: 9 November 2026
 
 GM Native Maps has no server, account, analytics or tracking. It does not
 collect or transmit data to the extension developer or any third-party service.
-When you explicitly agree to enable "Full photos and reviews", the extension
-handles Google authentication cookies locally in your browser so it can replace
-the Maps session. Maps continues to send its normal requests, including those
-cookies, to Google.
+The extension reads and writes no cookie.
 
 ## What the extension reads and changes
 
@@ -19,14 +16,10 @@ cookies, to Google.
   developer.
 - **Your settings.** Which switches are on is kept in your browser's local
   extension storage. It never leaves your device.
-- **Google authentication cookies, only after explicit consent.** When you
-  accept the consent dialog and enable "Full photos and reviews", it reads and
-  replaces Google cookies in your normal browser profile, and saves a working
-  set in local extension storage for reuse. This signs you out of Google in
-  that profile. Cookie values are not sent to the extension developer or any
-  third party; Google receives the cookies as part of Maps requests. With the
-  feature off, no cookie is read or written. Turning the switch off also
-  withdraws the saved consent; enabling it again asks you to agree again.
+- **Photo galleries.** When Google marks a gallery as limited, the extension
+  asks Google for the next pages using the token Google already sent, and
+  gives Maps the longer list. These are ordinary Maps requests to Google. No
+  cookie is read, written or saved, and the extension has no cookie permission.
 
 ## What leaves your device
 

@@ -21,116 +21,40 @@ export const PAGE_FILES = () =>
 
 // --- a fake browser ---------------------------------------------------------
 
-// Cookie stores are numbered like Chrome's rather than named like Firefox's,
-// so the store lookup is exercised rather than the fallback.
-export function fakeBrowser({
-  features = { hours: false, photos: true },
-  cookieConsent = true,
-  incognitoAllowed = true,
-  saved = null,
-  jar = [cookie('NID', 'ordinary')],
-  privateSession = () => [cookie('NID', 'fresh-private', { session: false })],
-  privateOpen = false
-} = {}) {
-  const did = [];
+// Just enough of the extension APIs for the background, which keeps the list
+// of tabs waiting for a reload and clears one when its page says hello.
+export function fakeBrowser({ features = { hours: false, photos: true }, pending = {} } = {}) {
+  const store = { features, reloadPending: pending };
   const listeners = {};
+  const did = [];
   const on = (name) => ({ addListener: (fn) => { listeners[name] = fn; } });
-
-  const store = { features, cookieConsentGoogleSessionSwap: cookieConsent, ...(saved ? { goodRoll: saved } : {}) };
-  let normal = [...jar];
-  let priv = privateOpen ? privateSession() : [];
-  let issued = 0;
 
   const browser = {
     storage: {
       local: {
-        get: async (key) => {
-          const keys = Array.isArray(key) ? key : [key];
-          return Object.fromEntries(keys.filter((k) => k in store).map((k) => [k, store[k]]));
+        get: async (keys) => {
+          const wanted = typeof keys === 'string' ? [keys] : keys;
+          return Object.fromEntries(wanted.filter((k) => k in store).map((k) => [k, structuredClone(store[k])]));
         },
-        set: async (patch) => { Object.assign(store, patch); },
+        set: async (values) => { Object.assign(store, structuredClone(values)); did.push(`set ${Object.keys(values)}`); },
         remove: async (key) => { delete store[key]; }
       },
-      onChanged: on('storage')
+      onChanged: on('storage-changed')
     },
-
-    cookies: {
-      getAllCookieStores: async () => (priv.length || privateOpen
-        ? [{ id: '0', tabIds: [1] }, { id: '1', tabIds: [99] }]
-        : [{ id: '0', tabIds: [1] }]),
-
-      getAll: async ({ storeId } = {}) => (
-        storeId === '1' ? priv : storeId === '0' ? normal : [...normal, ...priv]),
-
-      set: async (c) => {
-        did.push(`cookie ${c.name}=${c.value}`);
-        normal = normal.filter((x) => x.name !== c.name).concat([{ ...c, storeId: '0' }]);
-      },
-
-      remove: async ({ name, storeId }) => {
-        if (storeId === '1') priv = priv.filter((c) => c.name !== name);
-        else normal = normal.filter((c) => c.name !== name);
-      },
-
-      onChanged: on('cookie')
-    },
-
+    runtime: { onMessage: on('message'), onInstalled: on('installed'), onStartup: on('startup') },
     tabs: {
-      query: async () => (priv.length || privateOpen
-        ? [{ id: 1, incognito: false }, { id: 99, incognito: true }]
-        : [{ id: 1, incognito: false }]),
-      reload: async () => did.push('RELOAD'),
-      update: async (id, { url }) => did.push(`OPEN ${url}`),
-      sendMessage: async (id, m) => did.push((m.quiet ? 'log: ' : 'TOAST: ') + m.text),
+      sendMessage: async (id, m) => did.push(`message ${m.type}`),
       onRemoved: on('tab-removed')
-    },
-
-    windows: {
-      create: async (options) => {
-        issued++;
-        did.push(`private window${options.focused === false ? ' (unfocused)' : ''}`);
-        priv = privateSession(issued);
-        return { id: issued };
-      },
-      remove: async () => { priv = []; }
-    },
-
-    runtime: { onMessage: on('message'), onInstalled: on('installed'), onStartup: on('startup'), id: 'gm-test' },
-    extension: { isAllowedIncognitoAccess: async () => incognitoAllowed }
+    }
   };
 
-  return {
-    browser,
-    listeners,
-    did,
-    storage: store,
-    consent: (value) => { store.cookieConsentGoogleSessionSwap = value; },
-    jarNow: () => normal,
-    privateNow: () => priv
-  };
+  return { browser, listeners, did, store, pendingNow: () => structuredClone(store.reloadPending) };
 }
-
-export const cookie = (name, value, extra = {}) => ({
-  name, value, domain: '.google.com', path: '/', secure: true,
-  session: false, expirationDate: 2000000000, storeId: '0', ...extra
-});
-
-export const savedSession = (cookies, agoMs = 60e3) => ({
-  savedAt: Date.now() - agoMs,
-  cookies: cookies.map(({ storeId, ...rest }) => rest)
-});
 
 // --- running the background -------------------------------------------------
 
-// Borrowing waits real seconds for Google to issue cookies. A test should
-// exercise the logic, not the patience.
-const impatient = (src) => src
-  .replace('waited < 15000', 'waited < 50')
-  .replace('await sleep(500)', 'await sleep(5)')
-  .replace('await sleep(2000)', 'await sleep(2)');
-
 export function loadBackground(world, { quiet = true } = {}) {
-  const src = impatient(BACKGROUND_FILES().map(read).join('\n'));
+  const src = BACKGROUND_FILES().map(read).join('\n');
 
   const saveLog = console.log;
   const saveWarn = console.warn;
@@ -145,11 +69,9 @@ export function loadBackground(world, { quiet = true } = {}) {
   }
 
   // The real listener returns immediately — messages are fire-and-forget,
-  // and the work happens after it returns. Awaiting the call therefore
-  // waits for nothing, which let test steps overlap and report failures
-  // that were only races in the test. Settling here makes each step land
+  // and the work happens after it returns. Settling here makes each step land
   // before the next one starts.
-  return async (msg, tabId = 1, settle = 120) => {
+  return async (msg, tabId = 1, settle = 60) => {
     world.listeners.message(msg, { tab: { id: tabId } });
     await wait(settle);
   };
@@ -267,7 +189,7 @@ export function loadPage({
       });
     },
     XMLHttpRequest: function () {},
-    sessionStorage: (() => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)) }; })()
+    sessionStorage: (() => { const m = new Map(); return { getItem: (k) => (m.has(k) ? m.get(k) : null), setItem: (k, v) => m.set(k, String(v)), removeItem: (k) => m.delete(k) }; })()
   };
   win.nativeSends = [];
   win.XMLHttpRequest.prototype = { open() {}, send() { win.nativeSends.push(this); }, addEventListener() {} };
@@ -327,9 +249,6 @@ export function loadPage({
     switchOn: () => win.postMessage({
       source: 'gm-native-maps', type: 'gm-settings', features: { photos: true, hours: true }
     }),
-    // The background saying the private-session tries are used up, so the
-    // page may lengthen a capped list itself.
-    allowFill: () => win.postMessage({ source: 'gm-native-maps', type: 'gm-fill-allowed' }),
     // Delivers a reply the way Maps does, over XHR.
     reply: (text, body) => {
       const xhr = new win.XMLHttpRequest();
@@ -388,6 +307,14 @@ export function loadPage({
       const pane = { nodeType: 1, scrollHeight: 1000, clientHeight: 400, scrollTop: atEnd ? 600 : 0 };
       for (const fn of scrollListeners) fn({ target: pane });
     },
+    // What the page read from the first gallery reply, and from the page after
+    // it. Empty until a gallery has replied.
+    outcomes: () => (win.__GM_GALLERY__?.seen
+      ? [{ firstPage: win.__GM_GALLERY__.firstPage, serverTotal: win.__GM_GALLERY__.serverTotal,
+        asked: win.__GM_GALLERY__.asked }]
+      : []),
+    paged: () => (win.__GM_GALLERY__?.paged === null || win.__GM_GALLERY__?.paged === undefined
+      ? [] : [{ photos: win.__GM_GALLERY__.paged }]),
     sent: (type) => posted.filter((m) => m?.type === type)
   };
 }

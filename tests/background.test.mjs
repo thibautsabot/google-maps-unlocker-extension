@@ -1,390 +1,49 @@
-// What the background does with each thing a page can report.
-//
-// Every one of these was a bug at some point on 22–23 September. They are
-// here so the next change has to keep them fixed.
+// What the background does. It has one job: a tab waiting for a reload after
+// a switch was changed stops waiting once its page has loaded.
 
-import { fakeBrowser, loadBackground, cookie, savedSession, suite, wait } from './lib/harness.mjs';
+import { fakeBrowser, loadBackground, suite } from './lib/harness.mjs';
 
 const t = suite('background');
-const capped = { type: 'gm-roll-outcome', firstPage: 10, serverTotal: 45, asked: 20 };
-const blind = { type: 'gm-roll-outcome', firstPage: 10, serverTotal: 45, asked: null };
 const place = 'https://www.google.com/maps/place/X/@48.86,2.35,15z';
-const photoView = 'https://www.google.com/maps/@48.86,2.35,3a,75y,90t/data=!3m7';
 
-// --- cookie consent gate ----------------------------------------------------
 {
-  const world = fakeBrowser({ features: { hours: false, photos: true, reviews: false },
-    cookieConsent: false, saved: savedSession([cookie('NID', 'saved-one')]) });
+  const world = fakeBrowser({ pending: { 1: place, 2: place } });
   const send = loadBackground(world);
 
-  await send({ type: 'gm-hello', url: place });
-  await send(capped);
-  await send({ type: 'gm-borrow-private' });
-
-  t.check('photos enabled without explicit cookie consent: no cookie access or reload',
-    !world.did.some((d) => d.startsWith('cookie') || d === 'RELOAD' || d.startsWith('private')));
-}
-
-// --- private-window permission ----------------------------------------------
-{
-  const world = fakeBrowser({ incognitoAllowed: false });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-borrow-private' });
-  t.check('private access denied: no cookies changed and no reload',
-    !world.did.some((d) => d.startsWith('cookie') || d === 'RELOAD'));
-  t.check('private access denied: user is told which setting to enable',
-    world.did.some((d) => d.includes('private-window access is off')));
-}
-
-// --- switched off -----------------------------------------------------------
-{
-  const world = fakeBrowser({ features: { hours: false, photos: false } });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(capped);
-  await send({ type: 'gm-borrow-private' });
-
-  t.check('off: no cookie is touched and no tab reloaded',
-    !world.did.some((d) => d.startsWith('cookie') || d === 'RELOAD' || d.startsWith('private')));
-  t.check('off: a console command is refused in silence',
-    !world.did.length);
-}
-
-// --- a swap is not judged on the place card's preview --------------------------
-// The preview is two photos of two on a capped session too. A swap that saw
-// only that must wait for the gallery, however long that takes, and be judged
-// by it. It was once called lifted on the preview and the capped session kept.
-{
-  const preview = { type: 'gm-roll-outcome', firstPage: 2, serverTotal: 2, preview: true };
-  const world = fakeBrowser({ privateSession: () => [cookie('NID', 'fresh', { storeId: '1' })] });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(capped);
-  await send({ type: 'gm-hello', url: place });
-  await send(preview);
-  await wait(1800);
-  t.check('preview: the swap is not called lifted on it', !world.did.some((d) => d.includes('verdict: lifted')));
-  t.check('preview: and nothing is rolled for it', world.did.filter((d) => d.startsWith('private window')).length === 1);
-
-  await send(capped);
-  t.check('preview: the gallery that follows judges the swap, which is still capped',
-    world.did.some((d) => d.includes('verdict: still capped')));
+  await send({ type: 'gm-hello', url: place }, 1);
+  t.check('a page that has loaded is no longer waiting for a reload',
+    !(1 in world.pendingNow()));
+  t.check('  and another tab still is', 2 in world.pendingNow());
 }
 {
-  const preview = { type: 'gm-roll-outcome', firstPage: 2, serverTotal: 2, preview: true };
-  const world = fakeBrowser({ privateSession: () => [cookie('NID', 'fresh', { storeId: '1' })] });
+  const world = fakeBrowser({ pending: { 1: place } });
   const send = loadBackground(world);
 
-  await send({ type: 'gm-hello', url: place });
-  await send(capped);
-  await send({ type: 'gm-hello', url: place });
-  await send(preview);
-  await send({ type: 'gm-roll-outcome', firstPage: 20, serverTotal: 112, asked: 20 });
-  t.check('preview: a gallery that is whole lifts the swap', world.did.some((d) => d.includes('verdict: lifted')));
-}
-
-// --- the ordinary capped page -----------------------------------------------
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(capped);
-
-  t.check('capped: the saved session is put back first',
-    world.did.some((d) => d === 'cookie NID=saved-one'));
-  t.check('capped: and the tab reloads', world.did.includes('RELOAD'));
-  t.check('capped: nothing is shown on screen yet',
-    !world.did.some((d) => d.startsWith('TOAST')));
-}
-
-// --- a first page whose size could not be read ------------------------------
-//
-// Ten of forty-five used to be enough on its own, because ten was the number
-// Google was serving at the time. Without the page size it is pagination as
-// much as it is a cap, so nothing is decided until a second page says so.
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(blind);
-
-  t.check('an unreadable page size is not called a cap on the first page alone',
-    !world.did.includes('RELOAD') && !world.did.some((d) => d.startsWith('private window')));
-
-  await send({ type: 'gm-gallery-paged', photos: 0 });
-
-  t.check('  an empty second page settles it as capped',
-    world.did.some((d) => d.includes('second page came back empty')));
-  t.check('  and only then does it act', world.did.includes('RELOAD'));
-}
-
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(blind);
-  await send({ type: 'gm-gallery-paged', photos: 20 });
-
-  t.check('a second page that arrives clears the session instead',
-    world.did.some((d) => d.includes('not capped')));
-  t.check('  so nothing is rolled', !world.did.some((d) => d.startsWith('private window')));
-}
-
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-gallery-paged', photos: 0 });
-
-  t.check('a paging report with no first gallery behind it is ignored',
-    !world.did.includes('RELOAD'));
-}
-
-// --- the review limit ------------------------------------------------------
-// One switch, one swap. The review section is a second signal beside photos.
-const limitedReviews = { type: 'gm-reviews-state', limited: true, url: place };
-const clearReviews = { type: 'gm-reviews-state', limited: false, url: place };
-const saved = () => savedSession([cookie('NID', 'saved-one')]);
-
-{
-  const world = fakeBrowser({ features: { photos: false }, saved: saved() });
-  const send = loadBackground(world);
-  await send(limitedReviews);
-
-  t.check('off: a limited review page changes nothing', !world.did.length);
-}
-
-{
-  const world = fakeBrowser({ saved: saved() });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(limitedReviews);
-
-  t.check('a limited review page swaps in the saved session',
-    world.did.includes('cookie NID=saved-one'));
-  t.check('  and reloads the tab', world.did.includes('RELOAD'));
   world.listeners['tab-removed'](1);
-}
-
-{
-  // Photos are fine, but the review section still shows the limit.
-  const world = fakeBrowser({ saved: saved() });
-  const send = loadBackground(world);
-
-  await send(limitedReviews);
-  world.did.length = 0;
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-page-photos', photos: 27, final: false, url: place });
-  await send(limitedReviews);
-
-  t.check('a swapped page with photos but a limited review section is not a success',
-    !world.did.some((d) => d.startsWith('TOAST')));
-  t.check('  and the next session is tried', world.did.some((d) => d.startsWith('private window')));
-  world.listeners['tab-removed'](1);
-}
-
-{
-  // Photos are fine and the review section says it is whole.
-  const world = fakeBrowser({ saved: saved() });
-  const send = loadBackground(world);
-
-  await send(capped);
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-page-photos', photos: 27, final: false, url: place });
-  await send(clearReviews);
-  await wait(2000);
-
-  t.check('photos and a whole review section: a success',
-    world.did.filter((d) => d.startsWith('TOAST')).length === 1);
-}
-
-{
-  // The review section never speaks; photos alone still decide, after a wait.
-  const world = fakeBrowser({ saved: saved() });
-  const send = loadBackground(world);
-
-  await send(capped);
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-page-photos', photos: 27, final: false, url: place });
-  await wait(2000);
-  t.check('a review section that has not spoken holds the verdict back',
-    !world.did.some((d) => d.startsWith('TOAST')));
-
-  await wait(4500);
-  t.check('  and after the extra wait, photos decide',
-    world.did.filter((d) => d.startsWith('TOAST')).length === 1);
-}
-
-// --- a lift that worked -----------------------------------------------------
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send(capped);
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-page-photos', photos: 27, final: false, url: place });
-  await send(clearReviews);
-  await wait(2000);
-
-  t.check('worked: exactly one toast, after the reload',
-    world.did.filter((d) => d.startsWith('TOAST')).length === 1);
-  t.check('worked: it names which session was used',
-    world.did.some((d) => d.startsWith('TOAST') && d.includes('Reused the session saved earlier')));
-}
-
-// --- silence is not proof ---------------------------------------------------
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send(capped);
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-page-photos', photos: 3, final: false, url: place });
-  await wait(5000);
-
-  t.check('a page that came back with three photos is not a success',
-    !world.did.some((d) => d.startsWith('TOAST')));
-  t.check('  and it rolls again', world.did.some((d) => d.startsWith('private window')));
-}
-
-// --- a reply that arrives after the verdict would have ----------------------
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send(capped);
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-gallery-asking' });
-  await wait(2000);                      // past the 1.5s silence verdict
-  await send(capped);                    // the slow reply: still capped
-
-  t.check('a request in flight holds the verdict back',
-    !world.did.some((d) => d.startsWith('TOAST')));
-}
-
-// --- the single photo viewer ------------------------------------------------
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send(capped);
-  const before = world.did.length;
-
-  await send({ type: 'gm-hello', url: photoView });
-  await send({ type: 'gm-gallery-asking' });
-  await send({ type: 'gm-gallery-idle' });
-  await send({ type: 'gm-page-photos', photos: 2, final: true, url: photoView });
-  await wait(2500);
-
-  const after = world.did.slice(before);
-  t.check('a photo view is not judged at all', after.some((d) => d.includes('cannot tell')));
-  t.check('  and does not trigger a roll', !after.some((d) => d.startsWith('private window')));
-}
-
-// --- rolling stops, then the page lengthens the list itself -------------------
-{
-  const world = fakeBrowser({ privateSession: (n) => [cookie('NID', `private-${n}`, { storeId: '1' })] });
-  const send = loadBackground(world);
-
-  for (let load = 0; load < 9; load++) {
-    await send({ type: 'gm-hello', url: place });
-    await send(capped);
-  }
-
-  const rolls = world.did.filter((d) => d.startsWith('private window')).length;
-  t.check(`rolling stops at six (rolled ${rolls})`, rolls === 6);
-  t.check('  the page is then allowed to lengthen the list, once',
-    world.did.filter((d) => d.includes('the page will lengthen the list itself')).length === 1);
-  t.check('  and reloaded once for it', world.did.filter((d) => d === 'RELOAD').length === 7);
-  t.check('  and after that it says it gave up', world.did.some((d) => d.includes('gave up after 6')));
+  await new Promise((r) => setTimeout(r, 60));
+  t.check('a tab that closes stops waiting', !(1 in world.pendingNow()));
 }
 {
-  // Before the six are used up the page is not told anything.
-  const world = fakeBrowser({ privateSession: (n) => [cookie('NID', `private-${n}`, { storeId: '1' })] });
+  const world = fakeBrowser({ pending: { 1: place } });
   const send = loadBackground(world);
 
-  for (let load = 0; load < 3; load++) {
-    await send({ type: 'gm-hello', url: place });
-    await send(capped);
-  }
-  t.check('fill not allowed while private sessions are still being tried',
-    !world.did.some((d) => d.includes('the page will lengthen the list itself')));
+  await send({ type: 'gm-something-else' }, 1);
+  t.check('a message it does not know is ignored', 1 in world.pendingNow() && !world.did.length);
 }
 {
-  // A page that is not capped never needs it.
-  const world = fakeBrowser({});
+  const world = fakeBrowser({ features: { hours: false, photos: false }, pending: { 1: place } });
   const send = loadBackground(world);
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-roll-outcome', firstPage: 20, serverTotal: 112, asked: 20 });
-  t.check('an uncapped page is never told to fill', !world.did.some((d) => d.includes('lengthen')));
-}
 
-// --- borrowing the same session twice ---------------------------------------
+  await send({ type: 'gm-hello', url: place }, 1);
+  t.check('with every switch off the hello is still answered', !(1 in world.pendingNow()));
+}
 {
-  const world = fakeBrowser({ privateSession: () => [cookie('NID', 'always-the-same', { storeId: '1' })] });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(capped);
-  await send({ type: 'gm-hello', url: place });
-  await send(capped);
-
-  t.check('a session already seen capped is refused rather than swapped in again',
-    world.did.some((d) => d.includes('already tried') || d.includes('came back the same one')));
+  // Nothing in the background reaches for cookies, windows or other tabs.
+  const world = fakeBrowser();
+  loadBackground(world);
+  t.check('the background was given no cookie or window API to use',
+    world.browser.cookies === undefined && world.browser.windows === undefined);
 }
 
-// --- consent survives a swap ------------------------------------------------
-{
-  const world = fakeBrowser({
-    jar: [cookie('SOCS', 'consent-given'), cookie('NID', 'capped')],
-    privateSession: () => [cookie('NID', 'fresh', { storeId: '1' })]
-  });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send(capped);
-
-  const jar = world.jarNow();
-  t.check('the consent answer is kept across a swap',
-    jar.find((c) => c.name === 'SOCS')?.value === 'consent-given');
-  t.check('  and the borrowed session still lands',
-    jar.find((c) => c.name === 'NID')?.value === 'fresh');
-  t.check('  and the log names the consent cookies without their values',
-    world.did.some((d) => d.includes('consent cookies: jar had SOCS(13)') && d.includes('jar now holds SOCS(13)'))
-    && !world.did.filter((d) => d.startsWith('log:')).some((d) => d.includes('consent-given')));
-}
-
-// --- the tab is on a photo when the swap happens ----------------------------
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });        // the place it came from
-  await send({ type: 'gm-hello', url: photoView });    // then a photo was opened
-  await send(capped);
-
-  t.check('the place is reopened rather than the photo reloaded',
-    world.did.some((d) => d.startsWith('OPEN ') && !d.includes(',3a,')));
-}
-
-// --- forgetting -------------------------------------------------------------
-{
-  const world = fakeBrowser({ saved: savedSession([cookie('NID', 'saved-one')]) });
-  const send = loadBackground(world);
-
-  await send({ type: 'gm-hello', url: place });
-  await send({ type: 'gm-forget' });
-
-  t.check('forget drops the saved session', !('goodRoll' in world.storage));
-  t.check('  and says what it forgot', world.did.some((d) => d.includes('forgot the session saved')));
-}
 
 process.exit(t.done());

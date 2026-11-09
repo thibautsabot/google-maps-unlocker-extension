@@ -10,20 +10,11 @@ const reload = document.getElementById('reload');
 
 // The switches as stored, with every missing one treated as off.
 const read = async () => {
-  const stored = await browser.storage.local.get([FEATURES_KEY, COOKIE_CONSENT_KEY]);
-  const features = { ...FEATURES_OFF, ...stored[FEATURES_KEY] };
-  features.photos = features.photos && stored[COOKIE_CONSENT_KEY] === true;
-  return features;
+  const stored = await browser.storage.local.get(FEATURES_KEY);
+  return { ...FEATURES_OFF, ...stored[FEATURES_KEY] };
 };
 
 const boxes = new Map();
-const consent = document.getElementById('cookie-consent');
-const consentAccept = document.getElementById('consent-accept');
-const consentCancel = document.getElementById('consent-cancel');
-const privateAccess = document.getElementById('private-access');
-const openPrivateSettings = document.getElementById('open-private-settings');
-let pendingConsent = false;
-let pendingPhotos = false;
 
 for (const feature of FEATURES) {
   const label = document.createElement('label');
@@ -43,40 +34,10 @@ for (const feature of FEATURES) {
   boxes.set(feature.id, box);
 
   box.addEventListener('change', async () => {
-    if (feature.id === 'photos' && box.checked) {
-      box.checked = false;
-      pendingConsent = true;
-      pendingPhotos = true;
-      consent.showModal();
-      consentAccept.focus();
-      return;
-    }
-
-    if (feature.id === 'photos' && !box.checked) {
-      await browser.storage.local.set({ [COOKIE_CONSENT_KEY]: false });
-    }
-
     await browser.storage.local.set({ [FEATURES_KEY]: { ...await read(), [feature.id]: box.checked } });
     await show(feature);
   });
 }
-
-consentAccept.addEventListener('click', async () => {
-  if (!pendingConsent || !pendingPhotos) return;
-  await browser.storage.local.set({ [COOKIE_CONSENT_KEY]: true });
-  await browser.storage.local.set({ [FEATURES_KEY]: { ...await read(), photos: true } });
-  boxes.get('photos').checked = true;
-  pendingConsent = false;
-  pendingPhotos = false;
-  consent.close();
-  await show(FEATURES.find((feature) => feature.id === 'photos'));
-});
-
-consentCancel.addEventListener('click', () => {
-  pendingConsent = false;
-  pendingPhotos = false;
-  consent.close();
-});
 
 // The tab the panel was opened from. The panel is tied to a window, so
 // "current" is that window's active tab.
@@ -143,66 +104,11 @@ async function describe(features, changed) {
     : 'Ready.';
 }
 
-async function privateAccessAllowed() {
-  try {
-    return await browser.extension.isAllowedIncognitoAccess();
-  } catch (_) {
-    return false;
-  }
-}
-
-function settingsUrl() {
-  const ua = navigator.userAgent;
-  const id = browser.runtime.id;
-  if (ua.includes('Firefox')) return 'about:addons';
-  if (ua.includes('Edg/')) return `edge://extensions/?id=${id}`;
-  if (ua.includes('OPR/')) return 'opera://extensions';
-  if (ua.includes('Chrome/')) return `chrome://extensions/?id=${id}`;
-  return null;
-}
-
-const SETTINGS_HINT = 'Open your browser’s extension settings and enable this extension in private/incognito windows.';
-
-const showHint = (text) => { privateAccess.querySelector('p').textContent = text; };
-
-openPrivateSettings.addEventListener('click', async () => {
-  const url = settingsUrl();
-  if (!url) {
-    showHint(SETTINGS_HINT);
-    return;
-  }
-
-  // Firefox refuses to let an extension open about: pages, so this opens the
-  // extension's own options page instead, which Firefox shows inside
-  // about:addons. The page says which switch to flip.
-  if (url.startsWith('about:')) {
-    try {
-      await browser.runtime.openOptionsPage();
-      window.close();
-    } catch (_) {
-      showHint(`Open a new tab, go to ${url}, choose this extension, Manage, and set "Run in Private Windows" to Allow.`);
-    }
-    return;
-  }
-
-  try {
-    await browser.tabs.create({ url });
-  } catch (_) {
-    showHint(`${SETTINGS_HINT} Address: ${url}`);
-  }
-});
-
-// Syncs switches, private access status and reload affordance.
+// Syncs the switches and the reload affordance.
 async function show(changed) {
   const features = await read();
 
   for (const [id, box] of boxes) box.checked = !!features[id];
-  boxes.get('photos').disabled = false;
-
-  const consentState = await browser.storage.local.get(COOKIE_CONSENT_KEY);
-  const consented = consentState[COOKIE_CONSENT_KEY] === true;
-  const allowed = await privateAccessAllowed();
-  privateAccess.hidden = !(features.photos && consented && !allowed);
 
   await describe(features, changed);
   await offerReload(changed);

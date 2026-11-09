@@ -62,38 +62,35 @@ for (const [label, files] of [['background', BACKGROUND_FILES()], ['page', PAGE_
   void names;
 }
 
-// --- messages: sent, relayed, handled --------------------------------------
+// --- the extension has no way to touch cookies ------------------------------
+// The photo fill runs in the page and sends nothing out. Borrowing a session
+// from a private window once needed the cookies permission, a consent dialog
+// and private-window access, and failed on every session tried.
 {
+  const everything = [
+    ...BACKGROUND_FILES(),
+    ...m.content_scripts.flatMap((c) => c.js),
+    'popup/popup.js'
+  ].map(read).join('\n');
+
+  t.check('no cookies permission is requested', !m.permissions.includes('cookies'));
+  t.check('no private-window access is requested', m.incognito === undefined);
+  t.check('no code reads or writes cookies', !/browser\.cookies|chrome\.cookies/.test(everything));
+  t.check('no code opens a private window', !/windows\.create|incognito/i.test(everything));
+  t.check('no consent dialog is left in the popup', !read('popup/popup.html').includes('cookie-consent'));
+  t.check('the only permission is storage', m.permissions.length === 1 && m.permissions[0] === 'storage');
+
   const page = PAGE_FILES().map(read).join('\n');
-  const bridge = read(m.content_scripts.find((s) => s.world !== 'MAIN').js.at(-1));
-  const catalogue = read('common/features.js');
+  const sent = [...page.matchAll(/(?:tell|ask)\(\s*(?:\{\s*type:\s*)?'([\w-]+)'/g)].map((x) => x[1]);
+  t.check('the page scripts send nothing to the background', sent.length === 0);
+  if (sent.length) console.log('        sends:', [...new Set(sent)].join(', '));
+}
+
+// --- the background only clears the reload prompt ---------------------------
+{
   const background = BACKGROUND_FILES().map(read).join('\n');
-
-  const sent = new Set([
-    ...[...page.matchAll(/ask\('([\w-]+)'/g)].map((x) => x[1]),
-    ...[...page.matchAll(/tell\(\{ type: '([\w-]+)'/g)].map((x) => x[1])
-  ]);
-  const relayed = new Set(
-    [...bridge.match(/\[([^\]]*)\]\.includes/s)[1].matchAll(/'(gm-[\w-]+)'/g)].map((x) => x[1]));
-  const handled = new Set([...background.matchAll(/handles\([^,]+, '([\w-]+)'/g)].map((x) => x[1]));
-
-  const dropped = [...sent].filter((type) => !relayed.has(type));
-  const ignored = [...sent].filter((type) => !handled.has(type));
-  const dead = [...relayed].filter((type) => !sent.has(type));
-
-  t.check('every message the page sends is relayed', dropped.length === 0);
-  if (dropped.length) console.log('        dropped:', dropped.join(', '));
-
-  t.check('every message the page sends is handled', ignored.length === 0);
-  if (ignored.length) console.log('        unhandled:', ignored.join(', '));
-
-  t.check('the relay allows nothing that is never sent', dead.length === 0);
-  if (dead.length) console.log('        dead:', dead.join(', '));
-
-  // The relay forwards the whole payload; listing fields by hand dropped one
-  // silently once, and the feature looked broken rather than unwired.
-  t.check('the relay forwards the payload whole, not field by field',
-    /\.\.\.payload|const \{ source, \.\.\.payload \}/.test(bridge));
+  const handled = [...background.matchAll(/handles\([^,]+, '([\w-]+)'/g)].map((x) => x[1]);
+  t.check('the background answers the hello and nothing else', handled.length === 1 && handled[0] === 'gm-hello');
 }
 
 // --- the background must not touch the DOM ---------------------------------

@@ -9,47 +9,30 @@ Unlocker — for Google Maps™ changes how Google Maps behaves for a visitor wh
 is not signed in. It has three switches in its toolbar panel. Each is off until the user
 turns it on. With all three off it does nothing.
 
-| Switch | What it does | Touches cookies |
-|---|---|---|
-| Full opening hours | Expands the collapsed weekly hours on click, and asks Google for the place again when its first reply carries only today | No |
-| Review search and filters | Lets the review search, sort and more-reviews controls work without the sign-in prompt | No |
-| Full photos and reviews | Replaces the browser's Google session so Maps serves the full gallery and reviews | **Yes** |
+| Switch | What it does |
+|---|---|
+| Full opening hours | Expands the collapsed weekly hours on click, and asks Google for the place again when its first reply carries only today |
+| Review search and filters | Lets the review search, sort and more-reviews controls work without the sign-in prompt |
+| Full photos | Asks Google for the gallery pages after the first, using the token Google already sent, and gives Maps the longer list |
 
-## Why it needs the `cookies` permission
+## No cookies, no private windows
 
-Google decides how much of a photo gallery and a review list to send per
-session. Some sessions are given a short page with no way to ask for the next
-one. The "Full photos and reviews" switch copies the cookies from a
-private-window session into the normal browser session and reloads the tab.
-It then checks whether the page is now complete, and tries another session if
-not (at most six times). If all six are limited, the page asks Google for
-the next photo pages itself, using the continuation token Google already
-sent, and gives Maps the longer list. No cookie is involved in that last step.
+The extension requests no `cookies` permission and no `incognito` access, reads
+and writes no cookie, and opens no window. An earlier version borrowed a
+session from a private window; it was removed because it did not work.
 
-This is the only use of `cookies`. Cookie values are not sent to the developer
-or other third parties. Maps receives its ordinary requests to Google. A
-working set is saved in extension local storage so it can be reused.
-
-**The user consents in the product UI before cookies are handled.** When they
-try to enable the switch, the popup presents a modal disclosure before saving
-the setting. It states that the feature reads and replaces Google cookies,
-saves a working set locally, sends Maps requests to Google, and signs them out
-of Google in this browser. "Agree and continue" is a separate affirmative
-action; Cancel leaves the feature off. Turning the switch off clears consent,
-so enabling it again asks again. A missing consent record blocks all
-photo-roll background handlers, including on settings migrated from earlier
-versions. The listing and privacy policy repeat the disclosure, but consent
-is collected by the popup, not by the listing.
+The photo switch changes one reply. Google gives a visitor who is not signed in
+10 photos on the first gallery page, with a "limited" mark that makes Maps stop
+asking for more. The extension requests the next pages from Google with the
+token that reply carried, appends their photos, clears the mark and hands Maps
+the longer list. It runs in the page and sends nothing anywhere but to Google.
 
 ## Other permissions
 
-- `storage`: remembers which switches are on and the saved session.
+- `storage`: remembers which switches are on, and which tabs are waiting for a
+  reload.
 - Host access is limited to the 187 hostnames in Google's supported-domains
-  list at build time. Cookie swapping needs that access; page scripts run only
-  on `/maps/*` paths for those hosts.
-- `incognito: "spanning"`: the swap needs access to a private/incognito
-  window. The browser keeps this permission under user control; this extension
-  checks it and points the user to settings, but cannot enable it itself.
+  list at build time. Page scripts run only on `/maps/*` paths for those hosts.
 
 ## Something a reviewer may notice
 
@@ -61,12 +44,9 @@ anywhere.
 
 ## Data collection
 
-The extension handles authentication cookies locally after consent, and Maps
-receives its normal requests. The developer receives no data. `PRIVACY.md`
-explains the distinction. Firefox's `data_collection_permissions` describes
-what the extension sends to the developer or other third parties; verify the
-store dashboard disclosures against Mozilla's current data categories before
-submitting.
+The developer receives no data, and no cookie is read. `PRIVACY.md` explains
+what the extension reads on the page. Firefox's `data_collection_permissions`
+is declared as `none`.
 
 ## How to test
 
@@ -77,8 +57,9 @@ submitting.
    extension asks for the place again; console lines use `[GM-HOURS]`.
 4. Turn on "Review search and filters". Open the Reviews tab: search, sort and
    the more-reviews button work with no sign-in prompt.
-5. "Full photos and reviews" reloads the tab and replaces Google cookies. Test
-   it last, in a browser profile with no Google account signed in.
+5. Turn on "Full photos". Open a place with many photos and its gallery: the
+   first page shows 10, and scrolling keeps loading more. Console lines use
+   `[GM-GALLERY]`.
 
 Source and tests: https://github.com/thibautsabot/google-maps-unlocker-extension
 (`node tests/run.mjs`).

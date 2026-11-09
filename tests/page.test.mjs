@@ -14,37 +14,33 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45), askingFor(20));
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('fetch(Request): a capped reply is reported', !!outcome);
   t.check('fetch(Request):   served 10 of 45', outcome?.firstPage === 10 && outcome?.serverTotal === 45);
   t.check('fetch(Request):   having asked for 20', outcome?.asked === 20);
-  t.check('fetch(Request): the request is announced', page.sent('gm-gallery-asking').length === 1);
 }
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(20, 45), askingFor(20));
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('fetch(Request): an uncapped reply is reported as served 20', outcome?.firstPage === 20);
 }
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByFetch(galleryReply(10, 45), askingFor(20));
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('fetch(url, init): a capped reply is still reported', outcome?.firstPage === 10);
 }
 {
   const page = loadPage();
   await page.replyByRequest(galleryReply(10, 45), askingFor(20));
-  t.check('fetch(Request) with the feature off: nothing is reported', page.sent('gm-roll-outcome').length === 0);
+  t.check('fetch(Request) with the feature off: no extra request is made', (page.win.fetchCalls || []).length <= 1);
 }
 
 // --- GMGallery.capture() ----------------------------------------------------
@@ -53,7 +49,6 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45), askingFor(20));
 
   const shots = page.api().capture();
@@ -76,7 +71,6 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   const first = await page.api().probeNextPage();
   t.check('probe: nothing seen yet is said plainly', typeof first === 'string' && first.includes('open the Photos grid'));
 
@@ -108,7 +102,6 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45, null), askingFor(20));
   const result = await page.api().probeNextPage();
   t.check('probe: a reply with no token is reported, not retried',
@@ -121,7 +114,6 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(10, 40, 'T1', 0), askingFor(20));
   page.win.fetchCalls.length = 0;
   page.win.fetchReplies = [
@@ -143,7 +135,6 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(10, 40, 'T1', 0), askingFor(20));
   page.win.fetchReplies = [galleryReply(10, 40, 'T2', 0)];
 
@@ -155,7 +146,6 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(10, 40, 'T1', 0), askingFor(20));
   page.win.fetchReplies = [galleryReply(10, 1000, 'T2', 10)];
 
@@ -168,7 +158,6 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   const result = await page.api().probeAllPages();
   t.check('walk: nothing seen yet is said plainly', typeof result === 'string');
 }
@@ -179,7 +168,6 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(10, 116, 'GRID-TOKEN', 0), askingFor(20));
   await page.replyByRequest(galleryReply(2, 2, 'STRIP-TOKEN', 100), askingFor(4));
   page.win.fetchCalls.length = 0;
@@ -194,7 +182,6 @@ const t = suite('page');
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45), askingFor(20));
 
   const slots = page.api().capture()[0]?.calls[0]?.slots || [];
@@ -247,33 +234,29 @@ const photosIn = async (response) => {
   // they are used up.
   const page = loadPage();
   page.switchOn();
-  t.check('fill: off by default, private sessions are tried first',
-    page.api().fillGrid().startsWith('off'));
-  const waiting = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
-  t.check('fill: while it waits the reply is the server\'s own', await photosIn(waiting) === 10);
-  t.check('fill: and no extra request is made', page.win.fetchCalls.length === 1);
-
-  page.allowFill();
-  t.check('fill: on once the background allows it', page.api().fillGrid() === 'on for this session');
+  t.check('fill: on by default when the photos switch is on', page.api().fillGrid() === 'on');
   const allowed = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
-  t.check('fill: and then it lengthens the list', await photosIn(allowed) === 20);
+  t.check('fill: and it lengthens the list', await photosIn(allowed) === 20);
 
   page.api().fillGrid(false);
-  t.check('fill: fillGrid(false) turns it off again', page.api().fillGrid().startsWith('off'));
+  t.check('fill: fillGrid(false) turns it off', page.api().fillGrid() === 'off');
+  const waiting = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
+  t.check('fill: off, the reply is the server\'s own', await photosIn(waiting) === 10);
+  t.check('fill: and no extra request is made', page.win.fetchCalls.length === 1);
+
   page.api().fillGrid('auto');
-  t.check('fill: fillGrid(\'auto\') goes back to waiting for the background',
-    page.api().fillGrid().startsWith('off'));
+  t.check('fill: fillGrid(\'auto\') goes back to following the photos switch', page.api().fillGrid() === 'on');
 
   const off = loadPage();
-  off.allowFill();
-  t.check('fill: allowed, but with the photos switch off it stays off', off.api().fillGrid().startsWith('off'));
+  t.check('fill: with the photos switch off it is off', off.api().fillGrid() === 'off');
+  const untouched = await off.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
+  t.check('fill: and the reply is left alone', await photosIn(untouched) === 10 && off.win.fetchCalls.length === 1);
 }
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.api().fillGrid(true);
-  t.check('fill: turned on for the session', page.api().fillGrid() === 'on for this session');
+  t.check('fill: turned on for the session', page.api().fillGrid() === 'on');
 
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0),
@@ -297,7 +280,6 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.api().fillGrid(true);
 
   const response = await page.receiveByRequest([galleryReply(20, 116, 'T1', 0)], askingFor(20));
@@ -306,7 +288,6 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.api().fillGrid(true);
 
   const response = await page.receiveByRequest([galleryReply(10, 116, null, 0)], askingFor(20));
@@ -315,7 +296,6 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.api().fillGrid(true);
 
   const response = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 0)], askingFor(20));
@@ -324,7 +304,6 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.api().fillGrid(true);
 
   const response = await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), 'garbage'], askingFor(20));
@@ -394,7 +373,6 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
   ], askingFor(20));
@@ -403,7 +381,6 @@ const photosIn = async (response) => {
   // A batchexecute call that is not the gallery goes through untouched.
   const other = loadPage();
   other.switchOn();
-  other.allowFill();
   const otherText = ")]}'\n\n20\n[[\"wrb.fr\",\"T4jwAf\",\"[1]\"]]\n";
   const otherResponse = await other.receiveRpc('T4jwAf', [otherText]);
   t.check('fill: a call that is not the gallery is left as it is',
@@ -418,7 +395,6 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.replyByRequest(galleryReply(10, 45), askingFor(20));
 
   const events = page.api().trace();
@@ -431,12 +407,11 @@ const photosIn = async (response) => {
   // The tracer wraps fetch last. Everything the hooks do must still work.
   const response = await page.receiveByRequest([galleryReply(10, 45)], askingFor(20));
   t.check('trace: the reply still reaches the page', await photosIn(response) === 10);
-  t.check('trace: the gallery is still reported through it', page.sent('gm-roll-outcome').length >= 1);
+  t.check('trace: the gallery is still reported through it', page.outcomes().length >= 1);
 }
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.api().fillGrid(true);
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
@@ -452,7 +427,6 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.api().fillGrid(true);
   const response = await page.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(8, 116, null, 20)
@@ -478,7 +452,6 @@ const photosIn = async (response) => {
   const make = async () => {
     const page = loadPage();
     page.switchOn();
-  page.allowFill();
     return read(await page.receiveByRequest([
       galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10), galleryReply(10, 116, 'T3', 20)
     ], askingFor(20)));
@@ -582,7 +555,6 @@ const photosIn = async (response) => {
   };
   const read = async (replies, page = loadPage()) => {
     page.switchOn();
-  page.allowFill();
     const response = await page.receiveByRequest(replies, askingFor(20));
     const text = await response.text();
     return { page, payload: [...text.matchAll(/"wrb\.fr","hspqX","((?:[^"\\]|\\.)*)"/g)]
@@ -603,7 +575,6 @@ const photosIn = async (response) => {
   // A true that an uncapped reply carries too is ordinary and stays.
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   const uncapped = JSON.parse(JSON.stringify(REPLY_CAPPED));
   uncapped[15] = null;
   uncapped[11] = true;
@@ -636,7 +607,6 @@ const photosIn = async (response) => {
   };
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   const response = await page.receiveByRequest([moved('T1'), moved('T2')], askingFor(20));
   t.check('token: a fill follows a token that moved', page.win.fetchCalls.length >= 2 && response !== undefined);
 }
@@ -649,7 +619,6 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.api().fillGrid(true);
   const response = await page.receiveByRequest([galleryReply(10, 116, 'T3', 20)], followUp);
 
@@ -663,7 +632,6 @@ const photosIn = async (response) => {
   // The first request, with no token, is still filled.
   const first = loadPage();
   first.switchOn();
-  first.allowFill();
   first.api().fillGrid(true);
   const filled = await first.receiveByRequest([
     galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)
@@ -691,7 +659,6 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.receiveByRequest([cappedPage('T1', 0), cappedPage('T2', 10)], askingFor(20));
   page.win.fetchCalls.length = 0;
 
@@ -722,7 +689,6 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.receiveByRequest([capped(10, 112, 'T1', 0), capped(10, 112, 'T2', 10)], askingFor(20));
 
   const joined = await page.receiveByRequest([capped(10, 112, 'T3', 20), capped(10, 112, 'T4', 30)], REQUEST_2);
@@ -741,7 +707,6 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   const { scrollListeners } = page;
   const pane = { nodeType: 1, scrollTop: 2400, scrollHeight: 5000, clientHeight: 600,
     querySelectorAll: () => [1, 2, 3] };
@@ -770,7 +735,6 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
   const el = pane(940, 2070);
   reset(page, el);
@@ -781,7 +745,6 @@ const photosIn = async (response) => {
   // No reply was handed over: nothing of ours moved it.
   const other = loadPage();
   other.switchOn();
-  other.allowFill();
   const el2 = pane(940, 2070);
   reset(other, el2);
   t.check('restore: without a handed-over reply the position is left alone', el2.scrollTop === 58);
@@ -797,56 +760,34 @@ const photosIn = async (response) => {
 // --- the small preview before the gallery is not the gallery --------------------
 // Maps asks for a few photos for the place card first: two of two, whatever the
 // session. Taken as the first reply it hid the real gallery, which then counted
-// as a second page, and a swap was judged lifted on the preview alone.
+// as a second page.
 {
   const page = loadPage();
   page.switchOn();
   await page.replyByRequest(galleryReply(2, 2, null, 0), askingFor(4));
-  const early = page.sent('gm-roll-outcome');
-  t.check('preview: it is reported as a preview, not as the gallery',
-    early.length === 1 && early[0].preview === true && early[0].firstPage === 2);
+  t.check('preview: it is not taken as the gallery', page.outcomes().length === 0);
 
   // However long the gallery takes to be opened.
   await wait(3000);
   await page.replyByRequest(galleryReply(10, 112, 'T1', 0), askingFor(20));
   await wait(50);
-  const outcomes = page.sent('gm-roll-outcome');
+  const outcomes = page.outcomes();
   t.check('preview: the gallery, when it comes, is the first reply',
-    outcomes.length === 2 && !outcomes[1].preview && outcomes[1].firstPage === 10);
-  t.check('preview: with its total and what it asked for', outcomes[1]?.serverTotal === 112 && outcomes[1]?.asked === 20);
-  t.check('preview: and it is not called a second page', page.sent('gm-gallery-paged').length === 0);
-
-  await page.replyByRequest(galleryReply(2, 2, null, 0), askingFor(4));
-  t.check('preview: a second preview is not reported again',
-    page.sent('gm-roll-outcome').filter((o) => o.preview).length === 1);
-}
-
-// --- the outcome says when the list was lengthened here --------------------------
-{
-  const page = loadPage();
-  page.switchOn();
-  page.allowFill();
-  await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
-  t.check('outcome: a lengthened list is marked as filled', page.sent('gm-roll-outcome')[0]?.filled === true);
-
-  const plain = loadPage();
-  plain.switchOn();
-  plain.allowFill();
-  await plain.receiveByRequest([galleryReply(20, 116, 'T1', 0)], askingFor(20));
-  t.check('outcome: the server\'s own list is not', plain.sent('gm-roll-outcome')[0]?.filled === false);
+    outcomes.length === 1 && outcomes[0].firstPage === 10);
+  t.check('preview: with its total and what it asked for', outcomes[0]?.serverTotal === 112 && outcomes[0]?.asked === 20);
+  t.check('preview: and it is not called a second page', page.paged().length === 0);
 }
 
 // --- a strip of neighbouring photos is not the end of the gallery ---------------
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   await page.receiveByRequest([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)], askingFor(20));
   // The open photo's neighbours: two photos, a total of two, no token.
   await page.receiveRpc('hspqX', [galleryReply(2, 2, null, 0)]);
   await wait(50);
-  t.check('strip: two photos of two do not end the watch as a cut list',
-    page.sent('gm-fill-stalled').length === 0);
+  t.check('strip: two photos of two do not replace the gallery it follows',
+    page.outcomes().length === 1 && page.outcomes()[0].firstPage === 20 && page.outcomes()[0].serverTotal === 116);
 }
 
 // --- what the background is told, and the private-window fallback ---------------
@@ -857,9 +798,8 @@ const photosIn = async (response) => {
   const outcome = async (replies, request = askingFor(20)) => {
     const page = loadPage();
     page.switchOn();
-  page.allowFill();
     await page.receiveByRequest(replies, request);
-    return page.sent('gm-roll-outcome');
+    return page.outcomes();
   };
 
   const filled = await outcome([galleryReply(10, 116, 'T1', 0), galleryReply(10, 116, 'T2', 10)]);
@@ -879,11 +819,10 @@ const photosIn = async (response) => {
 
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.api().fillGrid(false);
   await page.receiveByRequest([galleryReply(10, 116, 'T1', 0)], askingFor(20));
   t.check('report: with the fill off the capped reply reaches the roll',
-    page.sent('gm-roll-outcome')[0]?.firstPage === 10);
+    page.outcomes()[0]?.firstPage === 10);
 }
 
 // --- switched off -----------------------------------------------------------
@@ -892,7 +831,7 @@ const photosIn = async (response) => {
   page.reply(galleryReply(10, 45), askingFor(20));
   await wait(50);
 
-  t.check('off: a capped reply is not reported', page.sent('gm-roll-outcome').length === 0);
+  t.check('off: a capped reply is passed through whole', page.win.fetchCalls === undefined || page.win.fetchCalls.length === 0);
   t.check('off: nothing is logged either', page.logs.length === 0);
 }
 
@@ -900,28 +839,24 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(10, 45), askingFor(20));
   await wait(50);
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('a capped reply is reported', !!outcome);
   t.check('  served 10', outcome?.firstPage === 10);
   t.check('  of 45', outcome?.serverTotal === 45);
   t.check('  having asked for 20', outcome?.asked === 20);
-  t.check('the request is announced before its reply, so silence can be told'
-    + ' from a slow answer', page.sent('gm-gallery-asking').length === 1);
 }
 
 // --- a place with a great many photos ---------------------------------------
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(10, 250000), askingFor(20));
   await wait(50);
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('a total in the hundreds of thousands is still read, so the cap is still seen',
     outcome?.serverTotal === 250000);
 }
@@ -930,11 +865,10 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(20, 45), askingFor(20));
   await wait(50);
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('an uncapped reply is reported as served 20', outcome?.firstPage === 20);
 }
 
@@ -945,32 +879,28 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(frame('hspqX', REPLY_1), REQUEST_1);
   await wait(50);
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('real page 1: the gallery is reported', !!outcome);
-  t.check('  not mistaken for the single-photo viewer because of the category tabs',
-    page.sent('gm-gallery-idle').length === 0);
   t.check('  served 20 of 45', outcome?.firstPage === 20 && outcome?.serverTotal === 45);
   t.check('  having asked for 20, read from the paging message', outcome?.asked === 20);
 
   page.reply(frame('hspqX', REPLY_2), REQUEST_2);
   await wait(50);
 
-  const [paged] = page.sent('gm-gallery-paged');
+  const [paged] = page.paged();
   t.check('real page 2: reported as the session paging, 19 photos', paged?.photos === 19);
 }
 
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(frame('hspqX', REPLY_CAPPED), REQUEST_CAPPED);
   await wait(50);
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('real capped page: served 10 of 45 having asked for 20, which is the cap read'
     + ' straight off the first page', outcome?.firstPage === 10 && outcome?.serverTotal === 45
     && outcome?.asked === 20);
@@ -996,7 +926,7 @@ const photosIn = async (response) => {
   before.reply(frame('hspqX', REPLY_CAPPED), shifted(REQUEST_CAPPED));
   await wait(50);
   t.check('moved: the default layout gives up rather than read the wrong field',
-    before.sent('gm-roll-outcome')[0]?.asked === null);
+    before.outcomes()[0]?.asked === null);
 
   const generous = loadPage({ localStorage: shared });
   generous.switchOn();
@@ -1010,7 +940,7 @@ const photosIn = async (response) => {
   capped.switchOn();
   capped.reply(frame('hspqX', REPLY_CAPPED), shifted(REQUEST_CAPPED));
   await wait(50);
-  const [outcome] = capped.sent('gm-roll-outcome');
+  const [outcome] = capped.outcomes();
   t.check('moved: a later capped load is judged by what was learned — 10 of 20',
     outcome?.firstPage === 10 && outcome?.asked === 20);
 }
@@ -1036,7 +966,6 @@ const photosIn = async (response) => {
   const shared = storage();
   const page = loadPage({ localStorage: shared });
   page.switchOn();
-  page.allowFill();
   page.reply(frame('hspqX', REPLY_1), REQUEST_1);
   page.reply(frame('hspqX', REPLY_2), REQUEST_2);
   await wait(50);
@@ -1049,11 +978,10 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(10, 45), askingBlind());
   await wait(50);
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('a page size that is not where it belongs is reported unknown, not guessed',
     outcome?.asked === null);
 }
@@ -1062,11 +990,10 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(10, 45), askingBatched(20));
   await wait(50);
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('in a batch, the page size is read from the call that served the gallery',
     outcome?.asked === 20);
 }
@@ -1074,11 +1001,10 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(10, 45), 'f.req=' + encodeURIComponent('[[["hspqX",42,null]]]'));
   await wait(50);
 
-  const [outcome] = page.sent('gm-roll-outcome');
+  const [outcome] = page.outcomes();
   t.check('arguments that are not a JSON string are skipped, not coerced',
     outcome && outcome.asked === null);
 }
@@ -1087,7 +1013,6 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(10, 45), askingBlind());
   page.reply(galleryReply(0, 45), askingBlind());
   await wait(50);
@@ -1095,7 +1020,7 @@ const photosIn = async (response) => {
   // Not observed: on the captured capped session Maps never asked for a
   // second page at all. Kept so that an empty follow-up, should one ever
   // arrive, is reported as nothing rather than dropped.
-  const [paged] = page.sent('gm-gallery-paged');
+  const [paged] = page.paged();
   t.check('an empty follow-up page is reported', !!paged);
   t.check('  as nothing served', paged?.photos === 0);
 }
@@ -1103,84 +1028,43 @@ const photosIn = async (response) => {
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(10, 45), askingBlind());
   page.reply(galleryReply(20, 45), askingBlind());
   await wait(50);
 
-  const [paged] = page.sent('gm-gallery-paged');
+  const [paged] = page.paged();
   t.check('a second page that arrives says the session can page', paged?.photos === 20);
 }
 
 {
   const page = loadPage();
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(10, 45), askingBlind());
   page.reply(galleryReply(20, 45), askingBlind());
   page.reply(galleryReply(0, 45), askingBlind());
   await wait(50);
 
   t.check('only the first follow-up counts, so the end of a long scroll is not a cap',
-    page.sent('gm-gallery-paged').length === 1);
+    page.paged().length === 1);
 }
 
 // --- the single photo viewer ------------------------------------------------
 {
   const page = loadPage({ url: 'https://www.google.com/maps/@48.86,2.35,3a,75y,90t/data=!3m7' });
   page.switchOn();
-  page.allowFill();
   page.reply(galleryReply(1, 45), askingFor(20));
   await wait(50);
 
   t.check('one photo of many is the viewer, not a capped gallery',
-    page.sent('gm-roll-outcome').length === 0);
-  t.check('  and it says so, to release the verdict', page.sent('gm-gallery-idle').length === 1);
-}
-
-// --- counting what the page itself carries ----------------------------------
-{
-  const page = loadPage();
-  page.switchOn();
-  page.allowFill();
-  page.scripts.set('state', {
-    textContent: 'APP_INITIALIZATION_STATE=' + JSON.stringify(
-      Array.from({ length: 27 }, (_, i) => `https://lh3.googleusercontent.com/p/P${i}\\u003dw100`))
-  });
-  await wait(4500);
-
-  const counts = page.sent('gm-page-photos');
-  t.check('the page reports how many photos it has', counts.length > 0);
-  t.check('  reading escaped URLs correctly (27, not 0)', counts.some((c) => c.photos === 27));
-  t.check('  and marks the last one final', counts.some((c) => c.final));
-  t.check('  carrying the address, so a photo view is recognisable',
-    counts.every((c) => typeof c.url === 'string'));
-}
-
-// --- the same photo at several sizes is one photo ---------------------------
-{
-  const page = loadPage();
-  page.switchOn();
-  page.allowFill();
-  page.scripts.set('state', {
-    textContent: 'APP_INITIALIZATION_STATE=' + JSON.stringify([
-      'https://lh3.googleusercontent.com/p/SAME=w203-h152',
-      'https://lh3.googleusercontent.com/p/SAME=w86-h86',
-      'https://lh3.googleusercontent.com/p/OTHER=w203'
-    ])
-  });
-  await wait(4500);
-
-  const counts = page.sent('gm-page-photos');
-  t.check('sizes of one photo are not counted twice',
-    counts.length > 0 && Math.max(...counts.map((c) => c.photos)) === 2);
+    page.outcomes().length === 0);
 }
 
 // --- the console API --------------------------------------------------------
 {
   const page = loadPage();
-  t.check('GMGallery.borrowPrivate exists', typeof page.api()?.borrowPrivate === 'function');
-  t.check('GMGallery.forget exists', typeof page.api()?.forget === 'function');
+  t.check('GMGallery.fillGrid exists', typeof page.api()?.fillGrid === 'function');
+  t.check('there is no command that touches cookies',
+    page.api()?.borrowPrivate === undefined && page.api()?.forget === undefined);
   t.check('the state gallery-ui reads is exposed', !!page.win.__GM_GALLERY__);
 }
 

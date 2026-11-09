@@ -23,35 +23,23 @@ and hands Maps the full reply, so nothing reloads and no cookie is touched.
 ### Review search and filters
 Search the reviews, sort them, open the full list.
 
-### Full photos and reviews
-**Why you need it.** Every time you open Maps, Google gives your browser a
-session, and the session decides how much you see. A **full session** shows
-everything. A **limited session** shows only 10 photos, then stops.
+### Full photos
+Without signing in, Google gives the first page of a gallery 10 photos and
+marks the list as limited. It still serves the pages after it when asked, but
+Maps stops asking.
 
-**What it does, in order.**
-1. **Borrows a full session.** When the first photo page comes back capped,
-   it borrows a session from a private window and reloads the tab. It checks
-   the gallery again and tries another session if needed, up to six times.
-   A full session that works is remembered.
-2. **Lengthens the list in the page.** If all six sessions are capped, the
-   tab reloads once more and the extension asks Google for the next pages
-   itself, using the token Google already sent, merges them, and hands Maps
-   the longer list. Maps keeps paging as you scroll. No further reload, and
-   no cookie is touched. The token and the "limited" flag are found by their
-   shape in Google's reply rather than by fixed position, so small layout
-   changes do not break it. In practice a limited session still stops at
-   about half of a large place's photos.
+The extension asks for those pages itself, using the token Google already sent
+with the first page, merges them, and hands Maps the longer list with the
+"limited" mark cleared. Maps then keeps loading photos as you scroll. Nothing
+reloads, no cookie is touched, and nothing is sent anywhere but to Google.
 
 **What to expect.**
-- Step 1 reloads the tab, sometimes several times, and Google may ask about
-  cookies again after each one. Step 2 happens once, after the sixth.
-- Some places stay limited whoever asks. After step 2 it stops instead of
-  reloading forever.
-
-Only step 1 changes cookies. The toolbar asks you to agree first. It reads
-and replaces Google cookies, and saves a working set locally for reuse. This
-signs you out of Google in that browser. Turn the switch off to withdraw
-consent; turning it on again asks again.
+- A large place goes from 10 photos to about 58. That is as far as Google
+  serves a visitor who is not signed in, whatever the place announces.
+- The token and the "limited" mark are found by their shape in Google's reply
+  rather than by fixed position, so small layout changes do not break it.
+- Google redesigns Maps now and then. A big change can break this until the
+  extension is updated.
 
 ---
 
@@ -59,9 +47,8 @@ consent; turning it on again asks again.
 
 - **No server, no account, no analytics.** There is nothing to gather here.
 - **It only runs on Google Maps pages.**
-- **Permissions:** `cookies` and `storage`, plus host access to the 187 Google domains in the supported-domains list captured by this release. The build enumerates them because browser match patterns cannot wildcard TLDs; refreshing the list requires a new build and release.
-  Cookies are only touched by *Full photos and reviews*, after you agree in
-  the popup.
+- **Permissions:** `storage`, to remember your switches, plus host access to the 187 Google domains in the supported-domains list captured by this release. The build enumerates them because browser match patterns cannot wildcard TLDs; refreshing the list requires a new build and release.
+  The extension reads and writes no cookie and needs no access to private windows.
 - **Nothing runs until you turn it on.** Each feature has its own switch in
   the toolbar. Use one, two or all three.
 
@@ -95,15 +82,6 @@ Firefox forgets temporary add-ons on restart, so load it again next time.
 4. Click the toolbar icon, flip the switches you want, and reload Maps.
 
 Loaded this way there are no automatic updates. Rebuild and load the new folder to update.
-
-### Private windows
-
-"Full photos and reviews" borrows a session from a private window, so the browser has to let the extension run there. If access is off, the popup says so and offers **Open extension settings**.
-
-- **Firefox:** opens the extension's page in `about:addons`. Click **Details**, then set **Run in Private Windows** to **Allow**.
-- **Chrome and Edge:** opens the extension's page in `chrome://extensions` or `edge://extensions`. Switch on **Allow in Incognito** (**Allow in InPrivate** in Edge).
-
-The browser requires you to enable this yourself.
 
 ---
 

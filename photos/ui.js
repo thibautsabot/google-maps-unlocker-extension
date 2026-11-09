@@ -4,7 +4,7 @@
   // Two jobs on the page, both visual.
   //
   //   hide the sign-in prompts around the photo grid
-  //   show the short note the background sends after a swap that worked
+  //   show a short note when the page asks for one
   //
   // A block is hidden only when all of these hold:
   //   a real grid is on screen — five tiles or more, not the photo viewer's strip
@@ -15,7 +15,7 @@
 
   const LOG = '[GM-GALLERY-UI]';
 
-  // --- the note after a swap that worked -------------------------------------
+  // --- a short note on the page ----------------------------------------------
 
   const TOAST_MS = 7000;
   let toastBox = null;

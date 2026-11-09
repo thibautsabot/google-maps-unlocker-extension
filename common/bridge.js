@@ -1,9 +1,9 @@
-// Relays between the page and the background.
+// Hands the page its settings, and tells the background a page has loaded.
 //
-// The gallery scripts run in the page's own world, where extension APIs are
-// unreachable, and the background is the only place cookies can be touched.
+// The scripts that change Maps run in the page's own world, where extension
+// APIs are unreachable. Storage is read here, in the extension's world.
 
-const LOG = '[GM-ROLL]';
+const LOG = '[GM-RELAY]';
 
 // Chrome stops the background when idle and starts it again on demand. A
 // message sent at document_start can land in the gap before it is running —
@@ -51,48 +51,19 @@ function publishFeatures(features) {
 }
 
 async function publishStoredFeatures() {
-  const stored = await browser.storage.local.get([FEATURES_KEY, COOKIE_CONSENT_KEY]);
-  const features = { ...FEATURES_OFF, ...stored[FEATURES_KEY] };
-  features.photos = features.photos && stored[COOKIE_CONSENT_KEY] === true;
-  publishFeatures(features);
+  const stored = await browser.storage.local.get(FEATURES_KEY);
+  publishFeatures({ ...FEATURES_OFF, ...stored[FEATURES_KEY] });
 }
 
 publishStoredFeatures()
   .catch((error) => console.warn(LOG, 'could not read which switches are on', error));
 
 browser.storage.onChanged.addListener((changes, area) => {
-  if (area !== 'local' || (!changes[FEATURES_KEY] && !changes[COOKIE_CONSENT_KEY])) return;
+  if (area !== 'local' || !changes[FEATURES_KEY]) return;
   publishStoredFeatures()
     .catch((error) => console.warn(LOG, 'could not update which switches are on', error));
 });
 
-window.addEventListener('message', (event) => {
-  if (event.source !== window) return;
-
-  const data = event.data;
-  if (!data || data.source !== 'gm-native-maps') return;
-  if (!['gm-roll-outcome', 'gm-gallery-asking', 'gm-gallery-idle', 'gm-gallery-paged',
-       'gm-page-photos', 'gm-borrow-private', 'gm-forget', 'gm-reviews-state'].includes(data.type)) return;
-
-  const { source, ...payload } = data;
-  send(payload);
-}, false);
-
-browser.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === 'gm-fill-allowed') {
-    try { window.postMessage({ source: 'gm-native-maps', type: 'gm-fill-allowed' }, location.origin); } catch (_) {}
-    return;
-  }
-  if (msg?.type !== 'gm-roll-log') return;
-
-  console.log(LOG, msg.text);
-  if (msg.quiet) return;
-
-  try {
-    window.postMessage({ source: 'gm-native-maps', type: 'gm-toast', text: msg.text }, location.origin);
-  } catch (_) {}
-});
-
-// Tells the background this tab has come back, so a swap it made before the
-// reload can be judged against the page that resulted.
+// Tells the background this tab has loaded, which clears the popup's reload
+// prompt for it.
 send({ type: 'gm-hello', url: location.href });

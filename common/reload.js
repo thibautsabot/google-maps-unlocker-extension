@@ -18,4 +18,6 @@ async function forgetReloadPending(tabId) {
   } catch (_) {}
 }
 
+handles(null, 'gm-hello', (msg, tabId) => { if (tabId != null) return forgetReloadPending(tabId); });
+
 onTabGone((tabId) => { forgetReloadPending(tabId); });

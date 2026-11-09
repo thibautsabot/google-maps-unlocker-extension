@@ -1,27 +1,17 @@
 (() => {
   'use strict';
 
-  // Reports what this page load was given. No cookies, no reload, no hiding:
-  // the background script decides what to do with it.
-  //
-  //   photos already in the page or the place payload   gm-page-photos
-  //   a gallery request leaving                          gm-gallery-asking
-  //   the first gallery reply                            gm-roll-outcome
-  //   a later page of that same gallery                  gm-gallery-paged
-  //   a reply that is one open photo, not the grid       gm-gallery-idle
-  //
-  // It does change one thing: a capped first reply is replaced by a longer
-  // one (see filledReply), and only the background touches cookies.
-  //
-  // The first reply is reported once. Later replies of the same gallery are
-  // follow-up pages, and only the first of those is reported — the end of a
-  // long scroll is not another cap.
+  // Lengthens a capped gallery. Google serves a session without a sign-in 10
+  // photos for the first page, but still serves the pages after it when the
+  // token is followed. The first reply is replaced by one that holds the page
+  // size Maps asked for, with the limited flag emptied, and Maps pages on from
+  // there. Nothing leaves the page: no cookie is read, no reload, no message.
 
   const { describe, askedFor, single, photoUrls, envelopes, learnLayout, DEFAULT_LAYOUT,
     mergePages, frameReply, at, tokenSlot, learnTokenSlot, capFlags, trueSlots } = window.__GMX;
 
   const state = {
-    firstPage: null, serverTotal: null, asked: null, rpc: null, seen: 0, viewerOnly: false,
+    firstPage: null, serverTotal: null, asked: null, rpc: null, seen: 0, viewerOnly: false, paged: null,
     bootstrapPhotos: null
   };
 
@@ -35,20 +25,9 @@
 
     const data = event.data;
     if (!data || data.source !== 'gm-native-maps') return;
-    if (data.type === 'gm-fill-allowed') {
-      try { sessionStorage.setItem(FILL_KEY, 'allowed'); } catch (_) {}
-      return;
-    }
     if (data.type !== 'gm-settings') return;
     photosOn = !!data.features?.photos;
   });
-
-  // Hands a report to bridge.js, which is the only script here that can
-  // reach the background. Nothing is sent while the feature is off.
-  const tell = (message) => {
-    if (!photosOn) return;
-    try { window.postMessage({ source: 'gm-native-maps', ...message }, location.origin); } catch (_) {}
-  };
 
   const note = (...parts) => {
     if (photosOn) console.log(LOG, ...parts);
@@ -110,24 +89,6 @@
       + ` [${was.size}] to [${layout.size}] — learned from a session that paged`);
   }
 
-  // The address to reload after a borrow. Once a photo is open the tab's URL
-  // names that photo, and reloading it lands in the viewer with no grid, so
-  // Escape drops to the bare map. Kept in sessionStorage because the useful
-  // address belongs to the previous page load.
-  const GALLERY_URL_KEY = 'gmnx.galleryUrl';
-
-  // Called when a real gallery arrives, so a later borrow reloads the grid
-  // rather than whatever photo happens to be open.
-  const rememberGalleryUrl = () => {
-    try { sessionStorage.setItem(GALLERY_URL_KEY, location.href); } catch (_) {}
-  };
-
-  // The grid address from the previous load. Null when this tab has not
-  // shown a gallery yet; the borrow then uses the address it is on.
-  const rememberedGalleryUrl = () => {
-    try { return sessionStorage.getItem(GALLERY_URL_KEY); } catch (_) { return null; }
-  };
-
   // Maps puts several calls in one reply. Each gallery call looks like
   // "wrb.fr","RpcName","<json array>".
   function eachGalleryCall(text, visit) {
@@ -144,7 +105,6 @@
   let reportedFirst = false;
   // The place card's preview has been reported, so it is reported once.
   let previewTold = false;
-  let reportingFilled = false;
   let viewerLogged = false;
   let reportedFollowUp = false;
   let firstExchange = null;
@@ -180,12 +140,12 @@
       reportedFollowUp = true;
       const more = describe(payload);
       const photos = more ? more.size : 0;
+      state.paged = photos;
 
       note(photos
         ? `a second page of ${photos} photos arrived, so this session can page`
         : 'a second page came back empty, so this session is capped where it stands');
 
-      tell({ type: 'gm-gallery-paged', photos });
       return true;
     });
   }
@@ -208,7 +168,6 @@
           note('this load opened a single photo, not the gallery.'
             + ' Press Escape or use the back arrow to reach the grid, then scroll');
 
-          tell({ type: 'gm-gallery-idle' });
         }
         return true;
       }
@@ -220,15 +179,12 @@
       // is the small preview Maps asks for to draw the place card, not the
       // gallery. It says nothing about the cap: a capped session gets the same
       // two photos. Taken as the first reply it hid the real one, which then
-      // counted as a second page, and a swap was judged lifted on the preview
-      // alone. So it is not the first reply. The background is told once, so
-      // it stops waiting on a reply that will not settle anything, and the
-      // real gallery reply is judged when it comes.
+      // counted as a second page. It is skipped, and the gallery reply is read
+      // when it comes.
       if (typeof found.total === 'number' && found.total <= found.size) {
         if (!previewTold) {
           previewTold = true;
           note(`a preview of ${found.size} photos arrived; the gallery itself is judged when it is opened`);
-          tell({ type: 'gm-roll-outcome', firstPage: found.size, serverTotal: found.total, preview: true });
         }
         return true;
       }
@@ -253,15 +209,12 @@
     state.asked = asked;
     state.seen++;
     state.viewerOnly = false;
-    rememberGalleryUrl();
 
     reportedFirst = true;
     note(`this session was served ${found.size} photos`
       + (found.total ? ` of ${found.total}` : '')
       + (asked ? `, having asked for ${asked}` : ', and what it asked for is unknown'));
 
-    tell({ type: 'gm-roll-outcome', firstPage: found.size, serverTotal: found.total, asked,
-      filled: reportingFilled });
   }
 
   // --- photos the page already has, before any gallery request ---------------
@@ -276,12 +229,6 @@
 
   let bootstrapReported = false;
 
-  // How many distinct photo URLs, and whether the page has finished adding
-  // them. final is what lets the background stop waiting for more.
-  function tellCount(photos, final) {
-    tell({ type: 'gm-page-photos', photos, final, url: location.href });
-  }
-
   // fromNetwork is the place payload Maps fetches when the gallery opens.
   // The copy embedded in the HTML at load time carries two preview images
   // and is not worth announcing on its own, so a smaller embedded count
@@ -291,7 +238,6 @@
 
     if (fromNetwork) bootstrapReported = true;
     state.bootstrapPhotos = distinct.size;
-    tellCount(distinct.size, false);
     note(fromNetwork
       ? `the place payload carried ${distinct.size} distinct photo URLs`
       : `${distinct.size} distinct photo URLs on the page so far`);
@@ -338,24 +284,10 @@
   // Maps sends the gallery call by XHR. fetch is hooked the same way in case
   // that changes. The request is left to the browser; only the reply is read.
   //
-  // The request is reported as it leaves, before any reply. Silence is how
-  // the background script recognises an uncapped session, so it has to know
-  // when a request is on its way — otherwise the gap before a slow reply
-  // looks like silence and the cap is called lifted while the answer is
-  // still coming.
 
   // A batchexecute POST is where the gallery call travels.
   const isBatch = (url, body) =>
     typeof body === 'string' && String(url).includes('batchexecute');
-
-  let askedAnnounced = false;
-
-  const noteAsked = (batch, body) => {
-    if (!batch || askedAnnounced || askedFor(body, { layoutFor }) === null) return;
-    askedAnnounced = true;
-
-    tell({ type: 'gm-gallery-asking' });
-  };
 
   function readReply(batch, text, requestBody, url = null) {
     if (batch) record(text, requestBody, url);
@@ -437,21 +369,18 @@
   // token is followed. With the photos switch on, the capped reply is
   // replaced by a longer one and Maps pages on from there. Nothing stored
   // means on; GMGallery.fillGrid(false) turns it off for this tab's session,
-  // which leaves the private-window roll as the only remedy.
+  // which shows the list exactly as Google sent it.
   const FILL_KEY = 'gmnx.fillGrid';
-  // Borrowing a full session from a private window is tried first. This fill
-  // runs only once the background says that has been used up, and the answer
-  // is kept for the tab's session so a reload does not forget it.
-  // GMGallery.fillGrid(true) forces it on, fillGrid(false) off, and
-  // fillGrid('auto') goes back to following the background.
+  // On whenever the photos switch is. GMGallery.fillGrid(false) turns it off
+  // for this tab's session, fillGrid(true) forces it on, and fillGrid('auto')
+  // goes back to following the switch.
   const fillOn = () => {
     try {
       const value = sessionStorage.getItem(FILL_KEY);
       if (value === '1') return true;
       if (value === '0') return false;
-      if (value === 'allowed') return photosOn;
     } catch (_) {}
-    return false;
+    return photosOn;
   };
   const MAX_FILL_PAGES = 15;
 
@@ -644,29 +573,19 @@
     const response = nativeFetch.apply(this, arguments);
     if (!wantsBody && !bootstrap) return response;
 
-    bodyPromise.then((body) => {
-      noteAsked(isBatch(url, body), body);
-    }).catch(() => {});
-
     return response.then(async (res) => {
       try {
         const body = await bodyPromise;
         const batch = isBatch(url, body);
         const text = await res.clone().text();
 
-        // What the background is told about this reply. It is the server's
-        // own unless the fill replaced it: a filled list that reaches the page
-        // size is reported as served in full, so no private window is opened,
-        // and a reply the fill could not improve is reported as it came, so
-        // the private-window roll still starts as the fallback.
+        // What the page's own reading sees: the server's reply, or the
+        // longer one handed to Maps in its place.
         let reported = false;
         const report = (reply) => {
           if (reported) return;
           reported = true;
-          // The background must know the list was lengthened here: the session
-          // behind it is still capped, whatever the list now looks like.
-          reportingFilled = reply !== text;
-          try { readReply(batch, reply, body, url); } finally { reportingFilled = false; }
+          readReply(batch, reply, body, url);
         };
 
         // The capped first page is replaced by a fuller one when asked for.
@@ -709,8 +628,6 @@
     const batch = url && isBatch(url, body);
     const bootstrap = url && !batch && isPlaceBootstrap(url);
 
-    noteAsked(batch, body);
-
     if (batch || bootstrap) {
       const xhr = this;
       xhr.addEventListener('loadend', () => {
@@ -725,40 +642,22 @@
 
   // --- console API ------------------------------------------------------------
 
-  // A console command. The string comes back to the console; the message
-  // goes to the background, which does the work.
-  const ask = (type, message, extra = {}) => {
-    try {
-      window.postMessage({ source: 'gm-native-maps', type, ...extra }, location.origin);
-      return message;
-    } catch (error) {
-      return `could not reach the extension: ${error}`;
-    }
-  };
-
   // ui.js reads this and must not hide anything while a single photo is
   // open. The two scripts run in the same world but load separately.
   window.__GM_GALLERY__ = state;
 
   window.GMGallery = {
-    // The extension does this itself when a page comes back capped. This is
-    // for another go.
-    borrowPrivate: () => ask('gm-borrow-private', 'rolling a fresh session — the page will reload',
-      { galleryUrl: rememberedGalleryUrl() || location.href }),
-
-    forget: () => ask('gm-forget', 'asked — see the message'),
-
-    // fillGrid() reports. true forces the in-page fill on, false turns it off,
-    // 'auto' goes back to waiting for the background to allow it.
+    // fillGrid() reports. true forces the fill on, false turns it off, and
+    // 'auto' goes back to following the photos switch.
     fillGrid: (on) => {
-      if (on === undefined) return fillOn() ? 'on for this session' : 'off (waiting for the private-session tries to run out)';
+      if (on === undefined) return fillOn() ? 'on' : 'off';
       const value = on === true ? '1' : (on === 'auto' ? null : '0');
       try {
         if (value === null) sessionStorage.removeItem(FILL_KEY);
         else sessionStorage.setItem(FILL_KEY, value);
       } catch (_) { return 'could not be saved'; }
-      return on === true ? 'on for this session: reload the place, then open the Photos grid'
-        : (on === 'auto' ? 'back to waiting for the private-session tries to run out' : 'off');
+      return on === true ? 'on: reload the place, then open the Photos grid'
+        : (on === 'auto' ? 'following the photos switch' : 'off');
     },
 
     // The shape of each gallery request and reply seen on this page, with no
@@ -941,13 +840,6 @@
       setTimeout(() => { try { readEmbeddedPlace(); } catch (_) {} }, delay);
     }
   };
-
-  // Long enough for the page to have finished filling in. If no gallery
-  // request has happened by now, none is coming, and the count is the whole
-  // story.
-  setTimeout(() => {
-    if (!reportedFirst) tellCount(state.bootstrapPhotos ?? 0, true);
-  }, 4000);
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', readWhenReady, { once: true });
